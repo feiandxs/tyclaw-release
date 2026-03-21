@@ -53,6 +53,14 @@ jobs:
         working-directory: source/apps/desktop
         run: node scripts/hoist-external-deps.mjs hoist
 
+      - name: Debug - list build resources
+        working-directory: source/apps/desktop
+        run: |
+          echo "=== build/ directory ==="
+          ls -la build/ || echo "build/ not found"
+          echo "=== electron-builder.json5 ==="
+          cat electron-builder.json5
+
       - name: Package macOS app
         working-directory: source/apps/desktop
         env:
@@ -144,29 +152,36 @@ jobs:
         run: |
           TAG="${{ github.event.client_payload.tag }}"
           VERSION="${TAG#v}"
-          RELEASE_DIR="release/${VERSION}"
-
-          # electron-builder 通常会自动生成 latest.yml，如果没有则手动生成
-          if [ ! -f "$RELEASE_DIR/latest.yml" ]; then
-            EXE_FILE=$(ls "$RELEASE_DIR"/*.exe 2>/dev/null | head -1)
-            if [ -n "$EXE_FILE" ]; then
-              EXE_NAME=$(basename "$EXE_FILE")
-              EXE_SIZE=$(stat -c%s "$EXE_FILE" 2>/dev/null || stat -f%z "$EXE_FILE")
-              EXE_SHA512=$(sha512sum "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64 -w0 2>/dev/null || shasum -a 512 "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64)
-              RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-              cat > "$RELEASE_DIR/latest.yml" <<EOF
-          version: ${VERSION}
-          files:
-            - url: ${EXE_NAME}
-              sha512: ${EXE_SHA512}
-              size: ${EXE_SIZE}
-          path: ${EXE_NAME}
-          sha512: ${EXE_SHA512}
-          releaseDate: '${RELEASE_DATE}'
-          EOF
-              echo "Generated latest.yml"
-            fi
-          fi
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const version = '${VERSION}';
+          const releaseDir = path.join('release', version);
+          const ymlPath = path.join(releaseDir, 'latest.yml');
+          if (fs.existsSync(ymlPath)) { console.log('latest.yml already exists'); process.exit(0); }
+          const files = fs.readdirSync(releaseDir);
+          const exe = files.find(f => f.endsWith('.exe') && !f.endsWith('.blockmap'));
+          if (!exe) { console.error('No exe found'); process.exit(1); }
+          const filePath = path.join(releaseDir, exe);
+          const buffer = fs.readFileSync(filePath);
+          const sha512 = crypto.createHash('sha512').update(buffer).digest('base64');
+          const size = buffer.length;
+          const releaseDate = new Date().toISOString();
+          const content = [
+            'version: ' + version,
+            'files:',
+            '  - url: ' + exe,
+            '    sha512: ' + sha512,
+            '    size: ' + size,
+            'path: ' + exe,
+            'sha512: ' + sha512,
+            'releaseDate: ' + releaseDate,
+            ''
+          ].join('\n');
+          fs.writeFileSync(ymlPath, content);
+          console.log('Generated ' + ymlPath);
+          "
 
       - name: Upload to R2
         working-directory: source/apps/desktop
