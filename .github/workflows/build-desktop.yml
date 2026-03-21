@@ -62,6 +62,18 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"
 
+      - name: Debug - list desktop directory
+        working-directory: source/apps/desktop
+        run: |
+          echo "=== Top-level files ==="
+          ls -1a
+          echo "=== dist-electron ==="
+          ls -la dist-electron/ 2>/dev/null || echo "NOT FOUND"
+          echo "=== dist ==="
+          ls -la dist/ 2>/dev/null | head -5 || echo "NOT FOUND"
+          echo "=== build ==="
+          ls -la build/ 2>/dev/null || echo "NOT FOUND"
+
       - name: Package macOS app
         working-directory: source/apps/desktop
         env:
@@ -70,7 +82,15 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac --publish never
+          DEBUG: "electron-builder"
+        run: pnpm exec electron-builder --mac --publish never 2>&1 || true
+
+      - name: Debug - show what electron-builder produced
+        if: always()
+        working-directory: source/apps/desktop
+        run: |
+          echo "=== release directory ==="
+          find release/ -type f 2>/dev/null || echo "No release dir"
 
       - name: Generate latest-mac.yml
         working-directory: source/apps/desktop
