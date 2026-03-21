@@ -66,20 +66,24 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
         run: |
-          CERT_FILE=$(mktemp /tmp/cert.XXXXXX.p12)
-          echo "$CSC_LINK" | base64 --decode > "$CERT_FILE"
+          # Decode the base64 cert
+          CERT_FILE="/tmp/tyclaw-cert.p12"
+          echo "$CSC_LINK" | base64 -D > "$CERT_FILE"
           echo "Cert file size: $(wc -c < "$CERT_FILE") bytes"
 
-          KEYCHAIN_FILE=$(mktemp /tmp/build.XXXXXX.keychain)
-          KEYCHAIN_PASSWORD="actions-build"
+          # Create and configure keychain
+          KEYCHAIN_FILE="/tmp/tyclaw-build.keychain-db"
+          KEYCHAIN_PASSWORD="actions_build_pw"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
           security set-keychain-settings "$KEYCHAIN_FILE"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
 
+          # Import cert with empty password
           security import "$CERT_FILE" -k "$KEYCHAIN_FILE" -P "" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_FILE"
 
+          # Add to keychain search list
           security list-keychains -d user -s "$KEYCHAIN_FILE" $(security list-keychains -d user | tr -d '"')
 
           echo "Certificate imported successfully"
@@ -90,6 +94,8 @@ jobs:
       - name: Package macOS app
         working-directory: source/apps/desktop
         env:
+          # Skip electron-builder's own cert import since we did it manually
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
