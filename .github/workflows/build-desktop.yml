@@ -84,7 +84,7 @@ jobs:
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
 
-          pip3 install awscli --quiet
+          brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest-mac.yml; do
             [ -f "$f" ] || continue
