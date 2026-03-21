@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────
-  # macOS 构建（签名 + 公证）
+  # macOS 构建（暂时跳过签名，先验证流程）
   # ────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
@@ -24,6 +24,7 @@ jobs:
           git clone --depth 1 --branch "$TAG" \
             "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
             source
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -53,31 +54,24 @@ jobs:
         working-directory: source/apps/desktop
         run: node scripts/hoist-external-deps.mjs hoist
 
-      - name: Debug - list build resources
+      - name: Read version from package.json
+        id: pkg
         working-directory: source/apps/desktop
         run: |
-          echo "=== build/ directory ==="
-          ls -la build/ || echo "build/ not found"
-          echo "=== electron-builder.json5 ==="
-          cat electron-builder.json5
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
 
-      - name: Package macOS app
+      - name: Package macOS app (unsigned for testing)
         working-directory: source/apps/desktop
         env:
-          # 代码签名
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          # 公证
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: pnpm exec electron-builder --mac --publish never
 
       - name: Generate latest-mac.yml
         working-directory: source/apps/desktop
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.pkg.outputs.version }}"
           node scripts/generate-latest-mac-yml.mjs "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 
       - name: Upload to R2
@@ -87,8 +81,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
 
           pip3 install awscli --quiet
@@ -142,6 +135,15 @@ jobs:
         working-directory: source/apps/desktop
         run: node scripts/hoist-external-deps.mjs hoist
 
+      - name: Read version from package.json
+        id: pkg
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+
       - name: Package Windows app (unsigned)
         working-directory: source/apps/desktop
         run: pnpm exec electron-builder --win --publish never
@@ -150,19 +152,18 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.pkg.outputs.version }}"
           node -e "
           const fs = require('fs');
           const path = require('path');
           const crypto = require('crypto');
-          const version = '${VERSION}';
+          const version = process.argv[1];
           const releaseDir = path.join('release', version);
           const ymlPath = path.join(releaseDir, 'latest.yml');
           if (fs.existsSync(ymlPath)) { console.log('latest.yml already exists'); process.exit(0); }
           const files = fs.readdirSync(releaseDir);
           const exe = files.find(f => f.endsWith('.exe') && !f.endsWith('.blockmap'));
-          if (!exe) { console.error('No exe found'); process.exit(1); }
+          if (!exe) { console.error('No exe found in ' + releaseDir); process.exit(1); }
           const filePath = path.join(releaseDir, exe);
           const buffer = fs.readFileSync(filePath);
           const sha512 = crypto.createHash('sha512').update(buffer).digest('base64');
@@ -176,12 +177,12 @@ jobs:
             '    size: ' + size,
             'path: ' + exe,
             'sha512: ' + sha512,
-            'releaseDate: ' + releaseDate,
+            \"releaseDate: '\" + releaseDate + \"'\",
             ''
           ].join('\n');
           fs.writeFileSync(ymlPath, content);
           console.log('Generated ' + ymlPath);
-          "
+          " "$VERSION"
 
       - name: Upload to R2
         working-directory: source/apps/desktop
@@ -191,8 +192,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
 
           pip3 install awscli --quiet
