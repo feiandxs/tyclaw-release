@@ -66,9 +66,9 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
         run: |
-          # Decode the base64 cert
+          # Decode the base64 cert using node (avoids shell/base64 CLI issues)
           CERT_FILE="/tmp/tyclaw-cert.p12"
-          echo "$CSC_LINK" | base64 -D > "$CERT_FILE"
+          node -e "require('fs').writeFileSync('$CERT_FILE', Buffer.from(process.env.CSC_LINK, 'base64'))"
           echo "Cert file size: $(wc -c < "$CERT_FILE") bytes"
 
           # Create and configure keychain
