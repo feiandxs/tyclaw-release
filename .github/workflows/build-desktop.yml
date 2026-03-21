@@ -1,0 +1,238 @@
+name: Build Desktop Release
+
+on:
+  repository_dispatch:
+    types: [build-release]
+
+# ── 全局环境变量 ─────────────────────────────────────────────
+env:
+  PNPM_VERSION: "10"
+  NODE_VERSION: "22"
+  R2_BUCKET: "files"
+  R2_RELEASE_PREFIX: "releases/tyclaw"
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # macOS 构建（签名 + 公证）
+  # ────────────────────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Clone source from GitLab
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          git clone --depth 1 --branch "$TAG" \
+            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
+            source
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        working-directory: source
+        run: pnpm --filter './packages/*' build
+
+      - name: Build desktop (renderer + main)
+        working-directory: source/apps/desktop
+        run: |
+          pnpm exec tsc
+          pnpm exec vite build
+          node scripts/build-main.mjs
+
+      - name: Hoist external deps for asar
+        working-directory: source/apps/desktop
+        run: node scripts/hoist-external-deps.mjs hoist
+
+      - name: Package macOS app
+        working-directory: source/apps/desktop
+        env:
+          # 代码签名
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # 公证
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --mac --publish never
+
+      - name: Generate latest-mac.yml
+        working-directory: source/apps/desktop
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          VERSION="${TAG#v}"
+          node scripts/generate-latest-mac-yml.mjs "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+
+      - name: Upload to R2
+        working-directory: source/apps/desktop
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          VERSION="${TAG#v}"
+          RELEASE_DIR="release/${VERSION}"
+
+          pip3 install awscli --quiet
+
+          for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest-mac.yml; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f")..."
+            aws s3 cp "$f" "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$(basename "$f")" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          done
+
+  # ────────────────────────────────────────────────────────────
+  # Windows 构建（无签名）
+  # ────────────────────────────────────────────────────────────
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - name: Clone source from GitLab
+        run: |
+          $TAG = "${{ github.event.client_payload.tag }}"
+          git clone --depth 1 --branch $TAG `
+            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" `
+            source
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        working-directory: source
+        run: pnpm --filter './packages/*' build
+
+      - name: Build desktop (renderer + main)
+        working-directory: source/apps/desktop
+        run: |
+          pnpm exec tsc
+          pnpm exec vite build
+          node scripts/build-main.mjs
+
+      - name: Hoist external deps for asar
+        working-directory: source/apps/desktop
+        run: node scripts/hoist-external-deps.mjs hoist
+
+      - name: Package Windows app (unsigned)
+        working-directory: source/apps/desktop
+        run: pnpm exec electron-builder --win --publish never
+
+      - name: Generate latest.yml for Windows auto-update
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          VERSION="${TAG#v}"
+          RELEASE_DIR="release/${VERSION}"
+
+          # electron-builder 通常会自动生成 latest.yml，如果没有则手动生成
+          if [ ! -f "$RELEASE_DIR/latest.yml" ]; then
+            EXE_FILE=$(ls "$RELEASE_DIR"/*.exe 2>/dev/null | head -1)
+            if [ -n "$EXE_FILE" ]; then
+              EXE_NAME=$(basename "$EXE_FILE")
+              EXE_SIZE=$(stat -c%s "$EXE_FILE" 2>/dev/null || stat -f%z "$EXE_FILE")
+              EXE_SHA512=$(sha512sum "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64 -w0 2>/dev/null || shasum -a 512 "$EXE_FILE" | awk '{print $1}' | xxd -r -p | base64)
+              RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+              cat > "$RELEASE_DIR/latest.yml" <<EOF
+          version: ${VERSION}
+          files:
+            - url: ${EXE_NAME}
+              sha512: ${EXE_SHA512}
+              size: ${EXE_SIZE}
+          path: ${EXE_NAME}
+          sha512: ${EXE_SHA512}
+          releaseDate: '${RELEASE_DATE}'
+          EOF
+              echo "Generated latest.yml"
+            fi
+          fi
+
+      - name: Upload to R2
+        working-directory: source/apps/desktop
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          VERSION="${TAG#v}"
+          RELEASE_DIR="release/${VERSION}"
+
+          pip3 install awscli --quiet
+
+          for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest.yml; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f")..."
+            aws s3 cp "$f" "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$(basename "$f")" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          done
+
+  # ────────────────────────────────────────────────────────────
+  # 清理旧版本（两个平台都构建完成后执行）
+  # ────────────────────────────────────────────────────────────
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [build-mac, build-win]
+    if: always() && (needs.build-mac.result == 'success' || needs.build-win.result == 'success')
+    steps:
+      - name: Clean old versions on R2 (keep latest 3)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          pip3 install awscli --quiet
+
+          # 清理旧版 macOS zip
+          ZIPS=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            | grep '\.zip$' | grep -v '\.blockmap' | sort -r | awk '{print $4}')
+          COUNT=0
+          for zip in $ZIPS; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt 3 ]; then
+              echo "Deleting old macOS artifact: $zip"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$zip" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/${zip}.blockmap" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}" 2>/dev/null || true
+            fi
+          done
+
+          # 清理旧版 Windows exe
+          EXES=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            | grep '\.exe$' | grep -v '\.blockmap' | sort -r | awk '{print $4}')
+          COUNT=0
+          for exe in $EXES; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt 3 ]; then
+              echo "Deleting old Windows artifact: $exe"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$exe" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/${exe}.blockmap" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}" 2>/dev/null || true
+            fi
+          done
