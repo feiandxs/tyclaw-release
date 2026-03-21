@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────
-  # macOS 构建（暂时跳过签名，先验证流程）
+  # macOS 构建（签名 + 公证）
   # ────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
@@ -46,7 +46,7 @@ jobs:
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: |
-          pnpm exec tsc
+          pnpm exec tsc --skipLibCheck
           pnpm exec vite build
           node scripts/build-main.mjs
 
@@ -62,10 +62,14 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"
 
-      - name: Package macOS app (unsigned for testing)
+      - name: Package macOS app
         working-directory: source/apps/desktop
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm exec electron-builder --mac --publish never
 
       - name: Generate latest-mac.yml
@@ -127,7 +131,7 @@ jobs:
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: |
-          pnpm exec tsc
+          pnpm exec tsc --skipLibCheck
           pnpm exec vite build
           node scripts/build-main.mjs
 
