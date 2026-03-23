@@ -101,11 +101,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm exec electron-builder --mac --publish never
 
-      - name: Generate latest-mac.yml
+      - name: Generate update metadata
         working-directory: source/apps/desktop
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          node scripts/generate-latest-mac-yml.mjs "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          node scripts/generate-latest-ymls.mjs "$VERSION"
 
       - name: Upload to R2
         working-directory: source/apps/desktop
@@ -181,77 +181,12 @@ jobs:
         working-directory: source/apps/desktop
         run: pnpm exec electron-builder --win --publish never
 
-      - name: Generate latest.yml for Windows auto-update
+      - name: Generate update metadata
         working-directory: source/apps/desktop
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          node -e "
-          const fs = require('fs');
-          const path = require('path');
-          const crypto = require('crypto');
-
-          const I18N_MARKER = '__TYCLAW_I18N_RELEASE_NOTES__:';
-          const LANGUAGES = ['en', 'zh-CN', 'zh-HK'];
-
-          function toYamlLiteral(value) {
-            const normalized = value.replace(/\r\n/g, '\n').trim();
-            if (!normalized) return '\"\"';
-            return '|-\n' + normalized.split('\n').map(l => '  ' + l).join('\n');
-          }
-
-          function loadReleaseNotes(appDir, version) {
-            const localizedDir = path.join(appDir, 'release-notes', version);
-            try {
-              if (fs.statSync(localizedDir).isDirectory()) {
-                const notes = {};
-                for (const lang of LANGUAGES) {
-                  try { const c = fs.readFileSync(path.join(localizedDir, lang + '.md'), 'utf8').trim(); if (c) notes[lang] = c; } catch {}
-                }
-                const fallback = notes['zh-CN'] || notes['en'] || Object.values(notes)[0];
-                if (!fallback) return '';
-                return I18N_MARKER + JSON.stringify({ default: fallback, locales: notes });
-              }
-            } catch {}
-            try { const c = fs.readFileSync(path.join(appDir, 'release-notes', version + '.md'), 'utf8').trim(); if (c) return c; } catch {}
-            return '';
-          }
-
-          const version = process.argv[1];
-          const appDir = process.cwd();
-          const releaseDir = path.join('release', version);
-          const ymlPath = path.join(releaseDir, 'latest.yml');
-          if (fs.existsSync(ymlPath)) { console.log('latest.yml already exists'); process.exit(0); }
-
-          const files = fs.readdirSync(releaseDir);
-          const exe = files.find(f => f.endsWith('.exe') && !f.endsWith('.blockmap'));
-          if (!exe) { console.error('No exe found in ' + releaseDir); process.exit(1); }
-
-          const filePath = path.join(releaseDir, exe);
-          const buffer = fs.readFileSync(filePath);
-          const sha512 = crypto.createHash('sha512').update(buffer).digest('base64');
-          const size = buffer.length;
-          const releaseDate = new Date().toISOString();
-          const releaseNotes = loadReleaseNotes(appDir, version);
-
-          const lines = [
-            'version: ' + version,
-            'files:',
-            '  - url: ' + exe,
-            '    sha512: ' + sha512,
-            '    size: ' + size,
-            'path: ' + exe,
-            'sha512: ' + sha512,
-            \"releaseDate: '\" + releaseDate + \"'\",
-          ];
-          if (releaseNotes) {
-            lines.push('releaseNotes: ' + toYamlLiteral(releaseNotes));
-          }
-          lines.push('');
-
-          fs.writeFileSync(ymlPath, lines.join('\n'));
-          console.log('Generated ' + ymlPath);
-          " "$VERSION"
+          node scripts/generate-latest-ymls.mjs "$VERSION"
 
       - name: Upload to R2
         working-directory: source/apps/desktop
