@@ -101,12 +101,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm exec electron-builder --mac --publish never
 
-      - name: Prepare release manifest
+      - name: Prepare changelog
         working-directory: source/apps/desktop
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           mkdir -p "release/${VERSION}"
-          cp release-manifest.yml "release/${VERSION}/"
+          cp changelog.yml "release/${VERSION}/"
 
       - name: Upload to R2
         working-directory: source/apps/desktop
@@ -120,7 +120,7 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest-mac.yml "$RELEASE_DIR"/release-manifest.yml; do
+          for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest-mac.yml "$RELEASE_DIR"/changelog.yml; do
             [ -f "$f" ] || continue
             echo "Uploading $(basename "$f")..."
             aws s3 cp "$f" "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$(basename "$f")" \
@@ -182,13 +182,13 @@ jobs:
         working-directory: source/apps/desktop
         run: pnpm exec electron-builder --win --publish never
 
-      - name: Prepare release manifest
+      - name: Prepare changelog
         working-directory: source/apps/desktop
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           mkdir -p "release/${VERSION}"
-          cp release-manifest.yml "release/${VERSION}/"
+          cp changelog.yml "release/${VERSION}/"
 
       - name: Upload to R2
         working-directory: source/apps/desktop
@@ -203,7 +203,7 @@ jobs:
 
           pip3 install awscli --quiet
 
-          for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest.yml "$RELEASE_DIR"/release-manifest.yml; do
+          for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap "$RELEASE_DIR"/latest.yml "$RELEASE_DIR"/changelog.yml; do
             [ -f "$f" ] || continue
             echo "Uploading $(basename "$f")..."
             aws s3 cp "$f" "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/$(basename "$f")" \
