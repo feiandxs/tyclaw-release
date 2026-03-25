@@ -1,0 +1,100 @@
+name: Deploy Web
+
+on:
+  repository_dispatch:
+    types: [deploy-web]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "GitLab branch to deploy"
+        required: false
+        default: "main"
+      sha:
+        description: "Optional GitLab commit SHA to checkout after clone"
+        required: false
+        default: ""
+
+env:
+  PNPM_VERSION: "10"
+  NODE_VERSION: "22"
+  PAGES_PROJECT_NAME: "tailos-web"
+  DOWNLOAD_BASE_URL: "https://downloads.ty-smart.ai"
+
+concurrency:
+  group: deploy-web-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source ref
+        id: ref
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+            SHA="${{ github.event.inputs.sha }}"
+          else
+            BRANCH="${{ github.event.client_payload.branch }}"
+            SHA="${{ github.event.client_payload.sha }}"
+          fi
+
+          if [ -z "$BRANCH" ]; then
+            BRANCH="main"
+          fi
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved branch: $BRANCH"
+          echo "Resolved sha: ${SHA:-<none>}"
+
+      - name: Clone source from GitLab
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${{ steps.ref.outputs.branch }}" \
+            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
+            source
+
+      - name: Checkout exact SHA
+        if: ${{ steps.ref.outputs.sha != '' }}
+        working-directory: source
+        shell: bash
+        run: |
+          git fetch --depth 1 origin "${{ steps.ref.outputs.sha }}"
+          git checkout "${{ steps.ref.outputs.sha }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        working-directory: source
+        env:
+          NEXT_PUBLIC_DOWNLOAD_BASE_URL: ${{ env.DOWNLOAD_BASE_URL }}
+        run: pnpm --filter web build
+
+      - name: Deploy Pages
+        working-directory: source/apps/download-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          pnpm exec wrangler pages deploy ../web/out --project-name "${{ env.PAGES_PROJECT_NAME }}"
+
+      - name: Deploy download worker
+        working-directory: source/apps/download-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec wrangler deploy
