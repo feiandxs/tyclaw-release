@@ -29,11 +29,23 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
 
       - name: Install dependencies
         working-directory: source
@@ -144,11 +156,23 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
 
       - name: Install dependencies
         working-directory: source
