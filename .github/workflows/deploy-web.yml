@@ -13,6 +13,11 @@ on:
         description: "Optional GitLab commit SHA to checkout after clone"
         required: false
         default: ""
+      deploy_worker:
+        description: "Whether to deploy the download worker"
+        required: false
+        type: boolean
+        default: false
 
 env:
   PNPM_VERSION: "10"
@@ -35,19 +40,32 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             BRANCH="${{ github.event.inputs.branch }}"
             SHA="${{ github.event.inputs.sha }}"
+            DEPLOY_WORKER="${{ github.event.inputs.deploy_worker }}"
           else
             BRANCH="${{ github.event.client_payload.branch }}"
             SHA="${{ github.event.client_payload.sha }}"
+            DEPLOY_WORKER="${{ github.event.client_payload.deploy_worker }}"
           fi
 
           if [ -z "$BRANCH" ]; then
             BRANCH="main"
           fi
 
+          case "${DEPLOY_WORKER,,}" in
+            true|1|yes|y|on)
+              DEPLOY_WORKER="true"
+              ;;
+            *)
+              DEPLOY_WORKER="false"
+              ;;
+          esac
+
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "deploy_worker=$DEPLOY_WORKER" >> "$GITHUB_OUTPUT"
           echo "Resolved branch: $BRANCH"
           echo "Resolved sha: ${SHA:-<none>}"
+          echo "Resolved deploy_worker: $DEPLOY_WORKER"
 
       - name: Clone source from GitLab
         shell: bash
@@ -95,6 +113,7 @@ jobs:
             --branch main
 
       - name: Deploy download worker
+        if: ${{ steps.ref.outputs.deploy_worker == 'true' }}
         working-directory: source/apps/download-worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
