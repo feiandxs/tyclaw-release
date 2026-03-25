@@ -3,6 +3,12 @@ name: Build Desktop Release
 on:
   repository_dispatch:
     types: [build-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to build"
+        required: true
+        type: string
 
 # ── 全局环境变量 ─────────────────────────────────────────────
 env:
@@ -20,7 +26,11 @@ jobs:
     steps:
       - name: Clone source from GitLab
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
           git clone --depth 1 --branch "$TAG" \
             "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
             source
@@ -147,7 +157,11 @@ jobs:
     steps:
       - name: Clone source from GitLab
         run: |
-          $TAG = "${{ github.event.client_payload.tag }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $TAG = "${{ github.event.inputs.tag }}"
+          } else {
+            $TAG = "${{ github.event.client_payload.tag }}"
+          }
           git clone --depth 1 --branch $TAG `
             "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" `
             source
