@@ -65,6 +65,27 @@ jobs:
         working-directory: source
         run: pnpm --filter './packages/*' build
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/crates/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock', 'source/crates/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build tailos CLI
+        working-directory: source
+        run: |
+          cargo build --release -p tailos-cli --manifest-path crates/Cargo.toml
+          mkdir -p apps/desktop/resources/bin
+          cp crates/target/release/tailos apps/desktop/resources/bin/
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
@@ -207,6 +228,28 @@ jobs:
       - name: Build packages
         working-directory: source
         run: pnpm --filter './packages/*' build
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/crates/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock', 'source/crates/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build tailos CLI
+        working-directory: source
+        shell: bash
+        run: |
+          cargo build --release -p tailos-cli --manifest-path crates/Cargo.toml
+          mkdir -p apps/desktop/resources/bin
+          cp crates/target/release/tailos.exe apps/desktop/resources/bin/
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
