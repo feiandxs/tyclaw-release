@@ -146,7 +146,7 @@ jobs:
 
           rm -f "$CERT_FILE"
 
-      - name: Package macOS app
+      - name: Package macOS universal app
         working-directory: source/apps/desktop
         env:
           # Skip electron-builder's own cert import since we did it manually
@@ -154,7 +154,42 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm run package:release:mac
+        run: pnpm exec electron-builder --mac zip --universal --publish never
+
+      - name: Verify macOS release artifacts
+        working-directory: source/apps/desktop
+        run: |
+          VERSION="${{ steps.pkg.outputs.version }}"
+          RELEASE_DIR="release/${VERSION}"
+
+          ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Expected a macOS zip artifact in $RELEASE_DIR" >&2
+            exit 1
+          fi
+
+          if [ ! -f "$RELEASE_DIR/latest-mac.yml" ]; then
+            echo "Missing latest-mac.yml in $RELEASE_DIR" >&2
+            exit 1
+          fi
+
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          unzip -q "$ZIP_FILE" -d "$TMP_DIR"
+
+          APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
+          if [ -z "$APP_BIN" ]; then
+            echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            exit 1
+          fi
+
+          APP_ARCHS=$(lipo -archs "$APP_BIN")
+          echo "Universal app architectures: $APP_ARCHS"
+
+          if [[ "$APP_ARCHS" != *"x86_64"* || "$APP_ARCHS" != *"arm64"* ]]; then
+            echo "Expected universal binary with x86_64 and arm64, got: $APP_ARCHS" >&2
+            exit 1
+          fi
 
       - name: Prepare changelog
         working-directory: source/apps/desktop
