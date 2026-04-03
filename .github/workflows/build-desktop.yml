@@ -56,6 +56,14 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
 
+      - name: Read source commit
+        id: git_ref
+        working-directory: source
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source short SHA: $SHORT_SHA"
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -152,7 +160,7 @@ jobs:
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -237,11 +245,23 @@ jobs:
           aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
             --endpoint-url "${{ secrets.R2_ENDPOINT }}"
 
+          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+            EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              | awk '{print $4}' \
+              | grep -- '-dev-' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              echo "Removing stale dev artifact: $existing"
+              aws s3 rm "${MAC_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
+
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if [ "$UPLOAD_VERSION" = "dev" ]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-dev-}"
+            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
             else
               TARGET_NAME="$BASENAME"
             fi
@@ -287,6 +307,14 @@ jobs:
         uses: pnpm/action-setup@v5
         with:
           version: ${{ env.PNPM_VERSION }}
+
+      - name: Read source commit
+        id: git_ref
+        working-directory: source
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source short SHA: $SHORT_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -378,7 +406,7 @@ jobs:
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -463,11 +491,23 @@ jobs:
           aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
             --endpoint-url "${{ secrets.R2_ENDPOINT }}"
 
+          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+            EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              | awk '{print $4}' \
+              | grep -- '-dev-' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              echo "Removing stale dev artifact: $existing"
+              aws s3 rm "${MAC_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
+
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if [ "$UPLOAD_VERSION" = "dev" ]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-dev-}"
+            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
             else
               TARGET_NAME="$BASENAME"
             fi
@@ -513,6 +553,15 @@ jobs:
         uses: pnpm/action-setup@v5
         with:
           version: ${{ env.PNPM_VERSION }}
+
+      - name: Read source commit
+        id: git_ref
+        working-directory: source
+        shell: bash
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source short SHA: $SHORT_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -605,7 +654,7 @@ jobs:
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -657,11 +706,23 @@ jobs:
           aws s3 cp "$RELEASE_DIR/changelog.yml" "${ROOT_TARGET}/changelog.yml" \
             --endpoint-url "${{ secrets.R2_ENDPOINT }}"
 
+          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+            EXISTING_DEV_FILES=$(aws s3 ls "${WIN_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              | awk '{print $4}' \
+              | grep -- '-dev-' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              echo "Removing stale dev artifact: $existing"
+              aws s3 rm "${WIN_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
+
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if [ "$UPLOAD_VERSION" = "dev" ]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-dev-}"
+            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
             else
               TARGET_NAME="$BASENAME"
             fi
@@ -684,7 +745,7 @@ jobs:
     needs: [build-mac-x64, build-mac-arm64, build-win]
     if: always() && contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) && contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) && contains(fromJSON('["success","skipped"]'), needs.build-win.result) && (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
     steps:
-      - name: Clean old versions on R2 (keep latest 4)
+      - name: Clean old versions on R2 (keep latest 3)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -698,11 +759,11 @@ jobs:
             local count
             zips=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-              | grep '\.zip$' | grep -v '\.blockmap' | sort -k1,1r -k2,2r | awk '{print $4}')
+              | grep '\.zip$' | grep -v '\.blockmap' | grep -v -- '-dev-' | sort -k1,1r -k2,2r | awk '{print $4}')
             count=0
             for zip in $zips; do
               count=$((count + 1))
-              if [ $count -gt 4 ]; then
+              if [ $count -gt 3 ]; then
                 echo "Deleting old macOS artifact: ${prefix}/$zip"
                 aws s3 rm "s3://${R2_BUCKET}/${prefix}/$zip" \
                   --endpoint-url "${{ secrets.R2_ENDPOINT }}"
@@ -717,11 +778,11 @@ jobs:
 
           EXES=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/" \
             --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-            | grep '\.exe$' | grep -v '\.blockmap' | sort -k1,1r -k2,2r | awk '{print $4}')
+            | grep '\.exe$' | grep -v '\.blockmap' | grep -v -- '-dev-' | sort -k1,1r -k2,2r | awk '{print $4}')
           COUNT=0
           for exe in $EXES; do
             COUNT=$((COUNT + 1))
-            if [ $COUNT -gt 4 ]; then
+            if [ $COUNT -gt 3 ]; then
               echo "Deleting old Windows artifact: windows/x64/$exe"
               aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/$exe" \
                 --endpoint-url "${{ secrets.R2_ENDPOINT }}"
