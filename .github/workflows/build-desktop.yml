@@ -271,7 +271,6 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           cp "$RELEASE_DIR"/changelog.yml "$STAGING_DIR"/
 
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
@@ -285,8 +284,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" = "dev" ]; then
-            perl -0pi -e "s/-\Q${VERSION}\E-/-dev-/g" "$STAGING_DIR/latest-mac.yml"
+          if [ "$UPLOAD_VERSION" != "dev" ]; then
+            cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           fi
 
           for f in "$STAGING_DIR"/*; do
@@ -455,7 +454,6 @@ jobs:
 
           pip3 install awscli --quiet
 
-          cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
           cp "$RELEASE_DIR"/changelog.yml "$STAGING_DIR"/
 
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
@@ -469,8 +467,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" = "dev" ]; then
-            perl -0pi -e "s/-\Q${VERSION}\E-/-dev-/g" "$STAGING_DIR/latest.yml"
+          if [ "$UPLOAD_VERSION" != "dev" ]; then
+            cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
           fi
 
           for f in "$STAGING_DIR"/*; do
