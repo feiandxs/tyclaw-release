@@ -94,7 +94,9 @@ jobs:
           # Create resources dir
           mkdir -p apps/desktop/resources/bin
           
-          # Use lipo to merge into a universal binary
+          # Merge tailos ahead of packaging. apps/desktop/electron-builder.json5
+          # must keep mac.x64ArchFiles aligned with this output path, otherwise
+          # @electron/universal will try to merge it again and fail the build.
           echo "Merging into universal binary..."
           lipo -create \
             crates/target/x86_64-apple-darwin/release/tailos \
