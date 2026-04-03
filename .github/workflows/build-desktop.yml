@@ -104,6 +104,25 @@ jobs:
           cp crates/target/x86_64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
           file apps/desktop/resources/bin/tailos
 
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+            BUN_ARCH="aarch64"
+          else
+            BUN_ARCH="x64"
+          fi
+          echo "Downloading Bun for darwin-${BUN_ARCH}..."
+          curl -fSL -o /tmp/bun.zip \
+            "https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-${BUN_ARCH}.zip"
+          unzip -o /tmp/bun.zip -d /tmp/bun-extract
+          cp /tmp/bun-extract/bun-darwin-${BUN_ARCH}/bun resources/bin/bun
+          chmod +x resources/bin/bun
+          echo "Bun version: $(resources/bin/bun --version)"
+          rm -rf /tmp/bun.zip /tmp/bun-extract
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
@@ -528,6 +547,19 @@ jobs:
           cargo build --release -p tailos-cli --manifest-path crates/Cargo.toml
           mkdir -p apps/desktop/resources/bin
           cp crates/target/release/tailos.exe apps/desktop/resources/bin/
+
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          mkdir -p resources/bin
+          echo "Downloading Bun for windows-x64..."
+          curl -fSL -o /tmp/bun.zip \
+            "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip"
+          unzip -o /tmp/bun.zip -d /tmp/bun-extract
+          cp /tmp/bun-extract/bun-windows-x64/bun.exe resources/bin/bun.exe
+          echo "Bun downloaded: $(ls -lh resources/bin/bun.exe)"
+          rm -rf /tmp/bun.zip /tmp/bun-extract
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
