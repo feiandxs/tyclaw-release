@@ -336,6 +336,19 @@ jobs:
           cp crates/target/aarch64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
           file apps/desktop/resources/bin/tailos
 
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          echo "Downloading Bun for darwin-aarch64..."
+          curl -fSL -o /tmp/bun.zip \
+            "https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip"
+          unzip -o /tmp/bun.zip -d /tmp/bun-extract
+          cp /tmp/bun-extract/bun-darwin-aarch64/bun resources/bin/bun
+          chmod +x resources/bin/bun
+          echo "Bun version: $(resources/bin/bun --version)"
+          rm -rf /tmp/bun.zip /tmp/bun-extract
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
