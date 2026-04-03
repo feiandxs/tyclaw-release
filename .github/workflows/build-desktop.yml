@@ -79,12 +79,31 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Build tailos CLI
+      - name: Build tailos CLI (Universal Binary)
         working-directory: source
         run: |
-          cargo build --release -p tailos-cli --manifest-path crates/Cargo.toml
+          # Add targets for both architectures
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          
+          # Build for both architectures
+          echo "Building for x86_64..."
+          cargo build --release -p tailos-cli --target x86_64-apple-darwin --manifest-path crates/Cargo.toml
+          echo "Building for aarch64..."
+          cargo build --release -p tailos-cli --target aarch64-apple-darwin --manifest-path crates/Cargo.toml
+          
+          # Create resources dir
           mkdir -p apps/desktop/resources/bin
-          cp crates/target/release/tailos apps/desktop/resources/bin/
+          
+          # Use lipo to merge into a universal binary
+          echo "Merging into universal binary..."
+          lipo -create \
+            crates/target/x86_64-apple-darwin/release/tailos \
+            crates/target/aarch64-apple-darwin/release/tailos \
+            -output apps/desktop/resources/bin/tailos
+          
+          # Verify the architecture
+          echo "Verifying architecture:"
+          file apps/desktop/resources/bin/tailos
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
