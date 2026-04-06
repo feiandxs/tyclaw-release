@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/desktop/package.json') }}
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('source/apps/desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
@@ -99,7 +99,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock', 'source/crates/**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -327,9 +327,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/desktop/package.json') }}
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('source/apps/desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
@@ -351,7 +351,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock', 'source/crates/**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -576,7 +576,7 @@ jobs:
           path: |
             ~\AppData\Local\electron\Cache
             ~\AppData\Local\electron-builder\Cache
-          key: ${{ runner.os }}-electron-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/desktop/package.json') }}
+          key: ${{ runner.os }}-electron-${{ hashFiles('source/apps/desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
 
@@ -598,7 +598,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock', 'source/crates/**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
