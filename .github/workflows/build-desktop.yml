@@ -610,6 +610,23 @@ jobs:
           mkdir -p apps/desktop/resources/bin
           cp crates/target/release/tailos.exe apps/desktop/resources/bin/
 
+      - name: Inspect tailos.exe runtime dependencies
+        working-directory: source
+        shell: pwsh
+        run: |
+          $dumpbin = Get-ChildItem `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
+            -Recurse -Filter dumpbin.exe `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $dumpbin) {
+            Write-Warning "dumpbin.exe not found, skipping dependency inspection"
+            exit 0
+          }
+
+          & $dumpbin /DEPENDENTS "crates\target\release\tailos.exe"
+
       - name: Download Bun runtime
         working-directory: source/apps/desktop
         shell: bash
