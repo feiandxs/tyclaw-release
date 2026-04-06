@@ -614,17 +614,40 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
-          $dumpbin = Get-ChildItem `
-            "${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
-            -Recurse -Filter dumpbin.exe `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = $null
+
+          if (Test-Path $vswhere) {
+            $vsInstallPath = & $vswhere -latest -products * `
+              -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+              -property installationPath
+
+            if ($vsInstallPath) {
+              $dumpbin = Get-ChildItem `
+                (Join-Path $vsInstallPath 'VC\Tools\MSVC') `
+                -Recurse -Filter dumpbin.exe `
+                -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match 'Hostx64\\x64\\dumpbin\.exe$' } |
+                Select-Object -First 1 -ExpandProperty FullName
+            }
+          }
+
+          if (-not $dumpbin) {
+            $dumpbin = Get-ChildItem `
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
+              "${env:ProgramFiles}\Microsoft Visual Studio" `
+              -Recurse -Filter dumpbin.exe `
+              -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'Hostx64\\x64\\dumpbin\.exe$' } |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
 
           if (-not $dumpbin) {
             Write-Warning "dumpbin.exe not found, skipping dependency inspection"
             exit 0
           }
 
+          Write-Host "Using dumpbin: $dumpbin"
           & $dumpbin /DEPENDENTS "crates\target\release\tailos.exe"
 
       - name: Download Bun runtime
