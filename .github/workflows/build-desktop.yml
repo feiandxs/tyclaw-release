@@ -93,15 +93,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: ${{ runner.arch }}
+          workspaces: |
+            source/crates -> target
 
       - name: Build tailos CLI (x64)
         working-directory: source
@@ -345,15 +341,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: ${{ runner.arch }}
+          workspaces: |
+            source/crates -> target
 
       - name: Build tailos CLI (arm64)
         working-directory: source
@@ -592,15 +584,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('source/crates/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          key: ${{ runner.arch }}
+          workspaces: |
+            source/crates -> target
 
       - name: Build tailos CLI
         working-directory: source
