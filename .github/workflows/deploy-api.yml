@@ -1,0 +1,143 @@
+name: Deploy API Gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "GitLab branch to deploy"
+        required: false
+        default: "main"
+      sha:
+        description: "Optional GitLab commit SHA to deploy. When set, it overrides branch HEAD."
+        required: false
+        default: ""
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: deploy-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Resolve deploy inputs
+        id: ref
+        shell: bash
+        run: |
+          BRANCH="${{ github.event.inputs.branch }}"
+          SHA="${{ github.event.inputs.sha }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+
+          if [ -z "$BRANCH" ]; then
+            BRANCH="main"
+          fi
+
+          if [ -z "$ENVIRONMENT" ]; then
+            ENVIRONMENT="production"
+          fi
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Resolved branch: $BRANCH"
+          echo "Resolved sha: ${SHA:-<none>}"
+          echo "Resolved environment: $ENVIRONMENT"
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+        run: |
+          for name in API_DEPLOY_HOST API_DEPLOY_USER API_DEPLOY_PATH API_DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Prepare SSH client
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          API_DEPLOY_KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$API_DEPLOY_SSH_KEY" > ~/.ssh/api_deploy_key
+          chmod 600 ~/.ssh/api_deploy_key
+
+          if [ -n "$API_DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$API_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${API_DEPLOY_PORT:-22}" "$API_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy API on remote host
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          DEPLOY_BRANCH: ${{ steps.ref.outputs.branch }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          ssh \
+            -i ~/.ssh/api_deploy_key \
+            -p "${API_DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            "${API_DEPLOY_USER}@${API_DEPLOY_HOST}" \
+            "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_BRANCH='${DEPLOY_BRANCH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
+            exit 1
+          fi
+
+          cd "$DEPLOY_PATH"
+
+          if ! sudo -n docker-compose version >/dev/null 2>&1; then
+            echo "sudo -n docker-compose is required on the remote host" >&2
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
+            echo "Refusing to deploy over a dirty working tree." >&2
+            git status --short
+            exit 1
+          fi
+
+          git fetch --prune origin
+
+          if [ -n "$DEPLOY_SHA" ]; then
+            echo "Deploying exact SHA: $DEPLOY_SHA"
+            git fetch --depth 1 origin "$DEPLOY_SHA"
+            git checkout --detach FETCH_HEAD
+          else
+            echo "Deploying branch head: $DEPLOY_BRANCH"
+            git fetch --depth 1 origin "$DEPLOY_BRANCH"
+            git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+          fi
+
+          sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env up -d --build
+          sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env ps
+
+          if ! curl --fail --silent --show-error http://127.0.0.1:8082/health; then
+            sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env logs --tail=200 api-gateway
+            exit 1
+          fi
+          EOF
