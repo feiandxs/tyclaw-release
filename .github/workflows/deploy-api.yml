@@ -136,7 +136,20 @@ jobs:
           sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env up -d --build
           sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env ps
 
-          if ! curl --fail --silent --show-error http://127.0.0.1:8082/health; then
+          health_ok=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:8082/health; then
+              echo
+              echo "Health check passed on attempt $attempt"
+              health_ok=true
+              break
+            fi
+
+            echo "Health check attempt $attempt/30 failed, waiting 2s..."
+            sleep 2
+          done
+
+          if [ "$health_ok" != "true" ]; then
             sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env logs --tail=200 api-gateway
             exit 1
           fi
