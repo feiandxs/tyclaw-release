@@ -1,8 +1,6 @@
 name: Deploy Web
 
 on:
-  repository_dispatch:
-    types: [deploy-web]
   workflow_dispatch:
     inputs:
       branch:
@@ -10,122 +8,134 @@ on:
         required: false
         default: "main"
       sha:
-        description: "Optional GitLab commit SHA to checkout after clone"
+        description: "Optional GitLab commit SHA to deploy. When set, it overrides branch HEAD."
         required: false
         default: ""
-      deploy_worker:
-        description: "Whether to deploy the download worker"
-        required: false
-        type: boolean
-        default: false
-
-env:
-  PNPM_VERSION: "10"
-  NODE_VERSION: "22"
-  PAGES_PROJECT_NAME: "tailos-web"
-  DOWNLOAD_BASE_URL: "https://downloads.ty-smart.ai"
 
 concurrency:
   group: deploy-web-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     steps:
-      - name: Resolve source ref
+      - name: Resolve deploy inputs
         id: ref
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BRANCH="${{ github.event.inputs.branch }}"
-            SHA="${{ github.event.inputs.sha }}"
-            DEPLOY_WORKER="${{ github.event.inputs.deploy_worker }}"
-          else
-            BRANCH="${{ github.event.client_payload.branch }}"
-            SHA="${{ github.event.client_payload.sha }}"
-            DEPLOY_WORKER="${{ github.event.client_payload.deploy_worker }}"
-          fi
+          BRANCH="${{ github.event.inputs.branch }}"
+          SHA="${{ github.event.inputs.sha }}"
 
           if [ -z "$BRANCH" ]; then
             BRANCH="main"
           fi
 
-          case "${DEPLOY_WORKER,,}" in
-            true|1|yes|y|on)
-              DEPLOY_WORKER="true"
-              ;;
-            *)
-              DEPLOY_WORKER="false"
-              ;;
-          esac
-
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "deploy_worker=$DEPLOY_WORKER" >> "$GITHUB_OUTPUT"
           echo "Resolved branch: $BRANCH"
           echo "Resolved sha: ${SHA:-<none>}"
-          echo "Resolved deploy_worker: $DEPLOY_WORKER"
 
-      - name: Clone source from GitLab
+      - name: Validate required secrets
         shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
         run: |
-          git clone --depth 1 --branch "${{ steps.ref.outputs.branch }}" \
-            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
-            source
+          for name in API_DEPLOY_HOST API_DEPLOY_USER API_DEPLOY_PATH API_DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name" >&2
+              exit 1
+            fi
+          done
 
-      - name: Checkout exact SHA
-        if: ${{ steps.ref.outputs.sha != '' }}
-        working-directory: source
+      - name: Prepare SSH client
         shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          API_DEPLOY_KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
         run: |
-          git fetch --depth 1 origin "${{ steps.ref.outputs.sha }}"
-          git checkout "${{ steps.ref.outputs.sha }}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$API_DEPLOY_SSH_KEY" > ~/.ssh/api_deploy_key
+          chmod 600 ~/.ssh/api_deploy_key
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: ${{ env.PNPM_VERSION }}
+          if [ -n "$API_DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$API_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${API_DEPLOY_PORT:-22}" "$API_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: source/pnpm-lock.yaml
-
-      - name: Cache Next.js build artifacts
-        uses: actions/cache@v5
-        with:
-          path: source/apps/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('source/pnpm-lock.yaml', 'source/apps/web/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-
-
-      - name: Install dependencies
-        working-directory: source
-        run: pnpm install --frozen-lockfile
-
-      - name: Build web
-        working-directory: source
+      - name: Deploy Web on remote host
+        shell: bash
         env:
-          NEXT_PUBLIC_DOWNLOAD_BASE_URL: ${{ env.DOWNLOAD_BASE_URL }}
-        run: pnpm --filter web build
-
-      - name: Deploy Pages
-        working-directory: source/apps/download-worker
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          DEPLOY_BRANCH: ${{ steps.ref.outputs.branch }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
         run: |
-          pnpm exec wrangler pages deploy ../web/out \
-            --project-name "${{ env.PAGES_PROJECT_NAME }}" \
-            --branch main
+          ssh \
+            -i ~/.ssh/api_deploy_key \
+            -p "${API_DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            "${API_DEPLOY_USER}@${API_DEPLOY_HOST}" \
+            "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_BRANCH='${DEPLOY_BRANCH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
+          set -euo pipefail
 
-      - name: Deploy download worker
-        if: ${{ steps.ref.outputs.deploy_worker == 'true' }}
-        working-directory: source/apps/download-worker
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm exec wrangler deploy
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
+            exit 1
+          fi
+
+          cd "$DEPLOY_PATH"
+
+          if ! sudo -n docker-compose version >/dev/null 2>&1; then
+            echo "sudo -n docker-compose is required on the remote host" >&2
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
+            echo "Refusing to deploy over a dirty working tree." >&2
+            git status --short
+            exit 1
+          fi
+
+          git fetch --prune origin
+
+          if [ -n "$DEPLOY_SHA" ]; then
+            echo "Deploying exact SHA: $DEPLOY_SHA"
+            git fetch --depth 1 origin "$DEPLOY_SHA"
+            git checkout --detach FETCH_HEAD
+          else
+            echo "Deploying branch head: $DEPLOY_BRANCH"
+            git fetch --depth 1 origin "$DEPLOY_BRANCH"
+            git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+          fi
+
+          sudo -n docker-compose -f deploy/web/docker-compose.yml --env-file deploy/web/.env up -d --build
+          sudo -n docker-compose -f deploy/web/docker-compose.yml --env-file deploy/web/.env ps
+
+          health_ok=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error -o /dev/null http://127.0.0.1:8083; then
+              echo "Health check passed on attempt $attempt"
+              health_ok=true
+              break
+            fi
+
+            echo "Health check attempt $attempt/30 failed, waiting 2s..."
+            sleep 2
+          done
+
+          if [ "$health_ok" != "true" ]; then
+            sudo -n docker-compose -f deploy/web/docker-compose.yml --env-file deploy/web/.env logs --tail=200 web
+            exit 1
+          fi
+          EOF
