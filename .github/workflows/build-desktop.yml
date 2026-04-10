@@ -127,6 +127,26 @@ jobs:
           echo "Bun version: $(resources/bin/bun --version)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
 
+      - name: Download ripgrep runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+            RG_ARCH="aarch64"
+          else
+            RG_ARCH="x86_64"
+          fi
+          echo "Downloading ripgrep for apple-darwin-${RG_ARCH}..."
+          curl -fSL -o /tmp/rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep-${RG_ARCH}-apple-darwin.tar.gz"
+          tar -xzf /tmp/rg.tar.gz -C /tmp
+          RG_DIR=$(find /tmp -maxdepth 1 -type d -name "ripgrep-*-${RG_ARCH}-apple-darwin" | head -n 1)
+          cp "$RG_DIR/rg" resources/bin/rg
+          chmod +x resources/bin/rg
+          echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+          rm -rf /tmp/rg.tar.gz "$RG_DIR"
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
@@ -212,6 +232,11 @@ jobs:
           APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
           if [ -z "$APP_BIN" ]; then
             echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            exit 1
+          fi
+
+          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+            echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
 
@@ -369,6 +394,20 @@ jobs:
           echo "Bun version: $(resources/bin/bun --version)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
 
+      - name: Download ripgrep runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          echo "Downloading ripgrep for apple-darwin-aarch64..."
+          curl -fSL -o /tmp/rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep-aarch64-apple-darwin.tar.gz"
+          tar -xzf /tmp/rg.tar.gz -C /tmp
+          RG_DIR=$(find /tmp -maxdepth 1 -type d -name 'ripgrep-*-aarch64-apple-darwin' | head -n 1)
+          cp "$RG_DIR/rg" resources/bin/rg
+          chmod +x resources/bin/rg
+          echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+          rm -rf /tmp/rg.tar.gz "$RG_DIR"
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
@@ -454,6 +493,11 @@ jobs:
           APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
           if [ -z "$APP_BIN" ]; then
             echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            exit 1
+          fi
+
+          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+            echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
 
@@ -651,6 +695,20 @@ jobs:
           echo "Bun downloaded: $(ls -lh resources/bin/bun.exe)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
 
+      - name: Download ripgrep runtime
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          mkdir -p resources/bin
+          echo "Downloading ripgrep for windows-x64..."
+          curl -fSL -o /tmp/rg.zip \
+            "https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep-x86_64-pc-windows-msvc.zip"
+          unzip -o /tmp/rg.zip -d /tmp/rg-extract
+          RG_DIR=$(find /tmp/rg-extract -maxdepth 1 -type d -name 'ripgrep-*-x86_64-pc-windows-msvc' | head -n 1)
+          cp "$RG_DIR/rg.exe" resources/bin/rg.exe
+          echo "ripgrep downloaded: $(ls -lh resources/bin/rg.exe)"
+          rm -rf /tmp/rg.zip /tmp/rg-extract
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: pnpm run build:release-assets
@@ -698,6 +756,10 @@ jobs:
           APP_EXE=$(find "release/${VERSION}" -path '*/win-unpacked/TyClaw.exe' -type f | head -n 1)
           if [ -z "$APP_EXE" ]; then
             echo "Unable to find Windows app executable under release/${VERSION}" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/rg.exe' -type f | grep -q .; then
+            echo "Missing bundled rg.exe in Windows unpacked app resources" >&2
             exit 1
           fi
           node scripts/smoke-test-app.mjs "$APP_EXE"
