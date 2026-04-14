@@ -3,7 +3,7 @@ name: Prune Actions Cache
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 3 * * 1"
+    - cron: "15 3 * * *"
 
 permissions:
   actions: write
@@ -21,6 +21,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Cache family grouping follows the cache key prefixes used by
+          # .github/workflows/build-desktop.yml.
+          # Keep these rules in sync whenever cache key prefixes change there.
           cache_json=$(gh api "repos/${REPO}/actions/caches?per_page=100")
           total_count=$(jq '.total_count' <<<"$cache_json")
 

@@ -69,6 +69,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # setup-node emits node-cache-* entries; keep that family in sync
+          # with prune-actions-cache.yml when changing cache inputs here.
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
 
@@ -78,6 +80,7 @@ jobs:
           path: |
             ~/Library/Caches/electron
             ~/Library/Caches/electron-builder
+          # Keep this prefix aligned with prune-actions-cache.yml family rules.
           key: ${{ runner.os }}-electron-${{ hashFiles('source/apps/desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
@@ -96,6 +99,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          # Keep rust-cache family naming aligned with prune-actions-cache.yml.
           key: ${{ runner.arch }}
           workspaces: |
             source/crates -> target
