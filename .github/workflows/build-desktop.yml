@@ -302,8 +302,10 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
@@ -328,7 +330,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           fi
 
@@ -597,8 +600,10 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
@@ -623,7 +628,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           fi
 
@@ -967,8 +973,10 @@ jobs:
 
           pip3 install awscli --quiet
 
-          aws s3 cp "$RELEASE_DIR/changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "$RELEASE_DIR/changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${WIN_TARGET}/" \
@@ -993,7 +1001,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
           fi
 
