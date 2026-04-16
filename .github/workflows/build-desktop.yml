@@ -232,13 +232,13 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
+          APP_BIN=$(find "$TMP_DIR" -path '*/TailOS.app/Contents/MacOS/TailOS' -type f | head -n 1)
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find TailOS binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" -path '*/TailOS.app/Contents/Resources/bin/rg' -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
@@ -496,13 +496,13 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
+          APP_BIN=$(find "$TMP_DIR" -path '*/TailOS.app/Contents/MacOS/TailOS' -type f | head -n 1)
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find TailOS binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" -path '*/TailOS.app/Contents/Resources/bin/rg' -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
@@ -762,7 +762,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          APP_EXE=$(find "release/${VERSION}" -path '*/win-unpacked/TyClaw.exe' -type f | head -n 1)
+          APP_EXE=$(find "release/${VERSION}" -path '*/win-unpacked/TailOS.exe' -type f | head -n 1)
           if [ -z "$APP_EXE" ]; then
             echo "Unable to find Windows app executable under release/${VERSION}" >&2
             exit 1
