@@ -248,6 +248,8 @@ jobs:
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
@@ -264,17 +266,21 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
+          APP_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" -o -path "*/${LEGACY_APP_NAME}.app/Contents/MacOS/${LEGACY_APP_NAME}" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/uv' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
@@ -546,6 +552,8 @@ jobs:
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
@@ -562,17 +570,21 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TyClaw.app/Contents/MacOS/TyClaw' -type f | head -n 1)
+          APP_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" -o -path "*/${LEGACY_APP_NAME}.app/Contents/MacOS/${LEGACY_APP_NAME}" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TyClaw binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
-          if ! find "$TMP_DIR" -path '*/TyClaw.app/Contents/Resources/bin/uv' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
@@ -923,9 +935,15 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          APP_EXE=$(find "release/${VERSION}" -path '*/win-unpacked/TyClaw.exe' -type f | head -n 1)
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
+          APP_EXE=$(
+            find "release/${VERSION}" \
+              \( -path "*/win-unpacked/${APP_NAME}.exe" -o -path "*/win-unpacked/${LEGACY_APP_NAME}.exe" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_EXE" ]; then
-            echo "Unable to find Windows app executable under release/${VERSION}" >&2
+            echo "Unable to find ${APP_NAME}.exe or ${LEGACY_APP_NAME}.exe under release/${VERSION}" >&2
             exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/rg.exe' -type f | grep -q .; then
