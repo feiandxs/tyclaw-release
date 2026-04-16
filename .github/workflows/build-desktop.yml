@@ -23,6 +23,7 @@ on:
 env:
   PNPM_VERSION: "10"
   NODE_VERSION: "22"
+  PYTHON_STANDALONE_VERSION: "3.12.13"
   R2_BUCKET: "files"
   R2_RELEASE_PREFIX: "releases/tyclaw"
 
@@ -68,6 +69,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # setup-node emits node-cache-* entries; keep that family in sync
+          # with prune-actions-cache.yml when changing cache inputs here.
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
 
@@ -77,6 +80,7 @@ jobs:
           path: |
             ~/Library/Caches/electron
             ~/Library/Caches/electron-builder
+          # Keep this prefix aligned with prune-actions-cache.yml family rules.
           key: ${{ runner.os }}-electron-${{ hashFiles('source/apps/desktop/package.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-
@@ -95,6 +99,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          # Keep rust-cache family naming aligned with prune-actions-cache.yml.
           key: ${{ runner.arch }}
           workspaces: |
             source/crates -> target
@@ -126,6 +131,33 @@ jobs:
           chmod +x resources/bin/bun
           echo "Bun version: $(resources/bin/bun --version)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
+
+      - name: Download uv runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          UV_ASSET_URL=$(python3 - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
+              release = json.load(response)
+          for asset in release['assets']:
+              if asset['name'] == 'uv-x86_64-apple-darwin.tar.gz':
+                  print(asset['browser_download_url'])
+                  break
+          else:
+              raise SystemExit('Unable to find uv-x86_64-apple-darwin.tar.gz')
+          PY
+          )
+          echo "Downloading uv from $UV_ASSET_URL"
+          curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
+          tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
+          cp "$TMP_DIR/uv-x86_64-apple-darwin/uv" resources/bin/uv
+          chmod +x resources/bin/uv
+          echo "uv version: $(resources/bin/uv --version)"
 
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
@@ -216,6 +248,8 @@ jobs:
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
@@ -232,14 +266,22 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TailOS.app/Contents/MacOS/TailOS' -type f | head -n 1)
+          APP_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" -o -path "*/${LEGACY_APP_NAME}.app/Contents/MacOS/${LEGACY_APP_NAME}" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TailOS binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TailOS.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
+            echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
 
@@ -266,8 +308,10 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
@@ -292,7 +336,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           fi
 
@@ -397,6 +442,33 @@ jobs:
           echo "Bun version: $(resources/bin/bun --version)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
 
+      - name: Download uv runtime
+        working-directory: source/apps/desktop
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          UV_ASSET_URL=$(python3 - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
+              release = json.load(response)
+          for asset in release['assets']:
+              if asset['name'] == 'uv-aarch64-apple-darwin.tar.gz':
+                  print(asset['browser_download_url'])
+                  break
+          else:
+              raise SystemExit('Unable to find uv-aarch64-apple-darwin.tar.gz')
+          PY
+          )
+          echo "Downloading uv from $UV_ASSET_URL"
+          curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
+          tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
+          cp "$TMP_DIR/uv-aarch64-apple-darwin/uv" resources/bin/uv
+          chmod +x resources/bin/uv
+          echo "uv version: $(resources/bin/uv --version)"
+
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
         run: |
@@ -480,6 +552,8 @@ jobs:
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
@@ -496,14 +570,22 @@ jobs:
           trap 'rm -rf "$TMP_DIR"' EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
-          APP_BIN=$(find "$TMP_DIR" -path '*/TailOS.app/Contents/MacOS/TailOS' -type f | head -n 1)
+          APP_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" -o -path "*/${LEGACY_APP_NAME}.app/Contents/MacOS/${LEGACY_APP_NAME}" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_BIN" ]; then
-            echo "Unable to find TailOS binary inside $(basename "$ZIP_FILE")" >&2
+            echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
-          if ! find "$TMP_DIR" -path '*/TailOS.app/Contents/Resources/bin/rg' -type f | grep -q .; then
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
+            echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
 
@@ -530,8 +612,10 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
@@ -556,7 +640,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
           fi
 
@@ -701,6 +786,34 @@ jobs:
           echo "Bun downloaded: $(ls -lh resources/bin/bun.exe)"
           rm -rf /tmp/bun.zip /tmp/bun-extract
 
+      - name: Download uv runtime
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          UV_ASSET_URL=$(python - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
+              release = json.load(response)
+          for asset in release['assets']:
+              if asset['name'] == 'uv-x86_64-pc-windows-msvc.zip':
+                  print(asset['browser_download_url'])
+                  break
+          else:
+              raise SystemExit('Unable to find uv-x86_64-pc-windows-msvc.zip')
+          PY
+          )
+          echo "Downloading uv from $UV_ASSET_URL"
+          curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.zip"
+          unzip -o "$TMP_DIR/uv.zip" -d "$TMP_DIR/uv-extract"
+          cp "$TMP_DIR/uv-extract/uv.exe" resources/bin/uv.exe
+          echo "uv downloaded: $(ls -lh resources/bin/uv.exe)"
+          resources/bin/uv.exe --version
+
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
         shell: bash
@@ -717,6 +830,66 @@ jobs:
           RG_DIR="$TMP_DIR/rg-extract/ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc"
           cp "$RG_DIR/rg.exe" resources/bin/rg.exe
           echo "ripgrep downloaded: $(ls -lh resources/bin/rg.exe)"
+
+      - name: Download Python runtime
+        working-directory: source/apps/desktop
+        shell: bash
+        env:
+          PYTHON_SERIES: ${{ env.PYTHON_STANDALONE_VERSION }}
+          PYTHON_TARGET: x86_64-pc-windows-msvc
+          PYTHON_PLATFORM: windows-x64
+          PYTHON_ENTRY: python.exe
+        run: |
+          rm -rf resources/runtime/python
+          mkdir -p resources/runtime/python
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest -o "$TMP_DIR/release.json"
+          ASSET_URL=$(python - "$TMP_DIR/release.json" "$PYTHON_SERIES" "$PYTHON_TARGET" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          release = json.loads(Path(sys.argv[1]).read_text())
+          version = sys.argv[2]
+          target = sys.argv[3]
+          suffix = f"-{target}-install_only.tar.gz"
+          prefix = f"cpython-{version}+"
+          for asset in release["assets"]:
+              name = asset["name"]
+              if name.startswith(prefix) and name.endswith(suffix):
+                  print(asset["browser_download_url"])
+                  break
+          else:
+              raise SystemExit(f"Unable to find python-build-standalone asset for {version} / {target}")
+          PY
+          )
+          echo "Downloading Python runtime from $ASSET_URL"
+          curl -fSL "$ASSET_URL" -o "$TMP_DIR/python-runtime.tar.gz"
+          tar -xzf "$TMP_DIR/python-runtime.tar.gz" --strip-components=1 -C resources/runtime/python
+          PYTHON_VERSION=$(resources/runtime/python/python.exe --version 2>&1 | awk '{print $2}')
+          python - "$PYTHON_VERSION" "$PYTHON_PLATFORM" "$PYTHON_ENTRY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version, platform, entry = sys.argv[1:4]
+          Path("resources/runtime/python/runtime.json").write_text(
+              json.dumps(
+                  {
+                      "name": "python",
+                      "implementation": "cpython",
+                      "version": version,
+                      "platform": platform,
+                      "entry": entry,
+                      "managed_by": "tyclaw-release",
+                      "layout_version": 1,
+                  },
+                  indent=2,
+              ) + "\n"
+          )
+          PY
+          resources/runtime/python/python.exe --version
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
@@ -762,15 +935,31 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          APP_EXE=$(find "release/${VERSION}" -path '*/win-unpacked/TailOS.exe' -type f | head -n 1)
+          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          LEGACY_APP_NAME="TyClaw"
+          APP_EXE=$(
+            find "release/${VERSION}" \
+              \( -path "*/win-unpacked/${APP_NAME}.exe" -o -path "*/win-unpacked/${LEGACY_APP_NAME}.exe" \) \
+              -type f | head -n 1
+          )
           if [ -z "$APP_EXE" ]; then
-            echo "Unable to find Windows app executable under release/${VERSION}" >&2
+            echo "Unable to find ${APP_NAME}.exe or ${LEGACY_APP_NAME}.exe under release/${VERSION}" >&2
             exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/rg.exe' -type f | grep -q .; then
             echo "Missing bundled rg.exe in Windows unpacked app resources" >&2
             exit 1
           fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/uv.exe' -type f | grep -q .; then
+            echo "Missing bundled uv.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          BUNDLED_PYTHON=$(find "release/${VERSION}" -path '*/win-unpacked/resources/runtime/python/python.exe' -type f | head -n 1)
+          if [ -z "$BUNDLED_PYTHON" ]; then
+            echo "Missing bundled Python runtime in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          "$BUNDLED_PYTHON" --version
           node scripts/smoke-test-app.mjs "$APP_EXE"
 
       - name: Package Windows app (unsigned)
@@ -802,8 +991,10 @@ jobs:
 
           pip3 install awscli --quiet
 
-          aws s3 cp "$RELEASE_DIR/changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            aws s3 cp "$RELEASE_DIR/changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
 
           if [[ "$UPLOAD_VERSION" == dev-* ]]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${WIN_TARGET}/" \
@@ -828,7 +1019,8 @@ jobs:
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
 
-          if [ "$UPLOAD_VERSION" != "dev" ]; then
+          # Keep stable updater metadata tied to tagged releases only.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
           fi
 

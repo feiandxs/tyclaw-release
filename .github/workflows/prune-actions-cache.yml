@@ -1,0 +1,80 @@
+name: Prune Actions Cache
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 3 * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune stale GitHub Actions caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Cache family grouping follows the cache key prefixes used by
+          # .github/workflows/build-desktop.yml.
+          # Keep these rules in sync whenever cache key prefixes change there.
+          cache_json=$(gh api "repos/${REPO}/actions/caches?per_page=100")
+          total_count=$(jq '.total_count' <<<"$cache_json")
+
+          if [ "$total_count" -eq 0 ]; then
+            echo "No Actions caches found."
+            exit 0
+          fi
+
+          family_jq='
+            def family:
+              if (.key | startswith("Windows-electron-")) then "Windows-electron"
+              elif (.key | startswith("macOS-electron-")) then "macOS-electron"
+              elif (.key | startswith("node-cache-")) then (.key | split("-") | .[0:4] | join("-"))
+              elif (.key | startswith("v0-rust-")) then (.key | split("-") | .[0:6] | join("-"))
+              else .key
+              end;
+
+            [.actions_caches[] | . + {family: family}]
+            | sort_by(.family, .last_accessed_at)
+            | group_by(.family)
+            | map(sort_by(.last_accessed_at) | reverse | .[1:])
+            | flatten
+          '
+
+          stale_caches=$(jq -c "$family_jq" <<<"$cache_json")
+          delete_count=$(jq 'length' <<<"$stale_caches")
+
+          if [ "$delete_count" -eq 0 ]; then
+            echo "Every cache family already has a single retained entry."
+            exit 0
+          fi
+
+          freed_bytes=0
+
+          while IFS= read -r cache; do
+            [ -n "$cache" ] || continue
+
+            cache_id=$(jq -r '.id' <<<"$cache")
+            cache_key=$(jq -r '.key' <<<"$cache")
+            cache_family=$(jq -r '.family' <<<"$cache")
+            cache_size=$(jq -r '.size_in_bytes' <<<"$cache")
+            cache_last_accessed=$(jq -r '.last_accessed_at' <<<"$cache")
+
+            gh api --method DELETE "repos/${REPO}/actions/caches/${cache_id}"
+            freed_bytes=$((freed_bytes + cache_size))
+
+            echo "Deleted cache ${cache_id} | ${cache_family} | ${cache_key} | last accessed ${cache_last_accessed}"
+          done < <(jq -c '.[]' <<<"$stale_caches")
+
+          freed_mb=$(awk "BEGIN { printf \"%.1f\", ${freed_bytes} / 1024 / 1024 }")
+          freed_gb=$(awk "BEGIN { printf \"%.2f\", ${freed_bytes} / 1024 / 1024 / 1024 }")
+
+          echo "Deleted ${delete_count} stale cache entries."
+          echo "Freed ${freed_mb} MB (${freed_gb} GB)."
