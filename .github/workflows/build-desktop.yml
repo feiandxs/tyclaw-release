@@ -115,24 +115,13 @@ jobs:
 
       - name: Download uv runtime
         working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          UV_ASSET_URL=$(python3 - <<'PY'
-          import json
-          import urllib.request
-
-          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
-              release = json.load(response)
-          for asset in release['assets']:
-              if asset['name'] == 'uv-x86_64-apple-darwin.tar.gz':
-                  print(asset['browser_download_url'])
-                  break
-          else:
-              raise SystemExit('Unable to find uv-x86_64-apple-darwin.tar.gz')
-          PY
-          )
+          UV_ASSET_URL=$(gh release view --repo astral-sh/uv --json assets -q '.assets[] | select(.name == "uv-x86_64-apple-darwin.tar.gz") | .url')
           echo "Downloading uv from $UV_ASSET_URL"
           curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
           tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
@@ -142,11 +131,13 @@ jobs:
 
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          RIPGREP_VERSION=$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/BurntSushi/ripgrep/releases/latest)")
+          RIPGREP_VERSION=$(gh release view --repo BurntSushi/ripgrep --json tagName -q '.tagName')
           ARCH=$(uname -m)
           if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
             RG_ARCH="aarch64"
@@ -412,24 +403,13 @@ jobs:
 
       - name: Download uv runtime
         working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          UV_ASSET_URL=$(python3 - <<'PY'
-          import json
-          import urllib.request
-
-          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
-              release = json.load(response)
-          for asset in release['assets']:
-              if asset['name'] == 'uv-aarch64-apple-darwin.tar.gz':
-                  print(asset['browser_download_url'])
-                  break
-          else:
-              raise SystemExit('Unable to find uv-aarch64-apple-darwin.tar.gz')
-          PY
-          )
+          UV_ASSET_URL=$(gh release view --repo astral-sh/uv --json assets -q '.assets[] | select(.name == "uv-aarch64-apple-darwin.tar.gz") | .url')
           echo "Downloading uv from $UV_ASSET_URL"
           curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
           tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
@@ -439,11 +419,13 @@ jobs:
 
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          RIPGREP_VERSION=$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/BurntSushi/ripgrep/releases/latest)")
+          RIPGREP_VERSION=$(gh release view --repo BurntSushi/ripgrep --json tagName -q '.tagName')
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-aarch64-apple-darwin.tar.gz"
           echo "Downloading $RG_ARCHIVE..."
           curl -fSL -o "$TMP_DIR/rg.tar.gz" \
@@ -744,24 +726,13 @@ jobs:
       - name: Download uv runtime
         working-directory: source/apps/desktop
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          UV_ASSET_URL=$(python - <<'PY'
-          import json
-          import urllib.request
-
-          with urllib.request.urlopen('https://api.github.com/repos/astral-sh/uv/releases/latest', timeout=20) as response:
-              release = json.load(response)
-          for asset in release['assets']:
-              if asset['name'] == 'uv-x86_64-pc-windows-msvc.zip':
-                  print(asset['browser_download_url'])
-                  break
-          else:
-              raise SystemExit('Unable to find uv-x86_64-pc-windows-msvc.zip')
-          PY
-          )
+          UV_ASSET_URL=$(gh release view --repo astral-sh/uv --json assets -q '.assets[] | select(.name == "uv-x86_64-pc-windows-msvc.zip") | .url')
           echo "Downloading uv from $UV_ASSET_URL"
           curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.zip"
           unzip -o "$TMP_DIR/uv.zip" -d "$TMP_DIR/uv-extract"
@@ -772,11 +743,13 @@ jobs:
       - name: Download ripgrep runtime
         working-directory: source/apps/desktop
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p resources/bin
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          RIPGREP_VERSION=$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/BurntSushi/ripgrep/releases/latest)")
+          RIPGREP_VERSION=$(gh release view --repo BurntSushi/ripgrep --json tagName -q '.tagName')
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip"
           echo "Downloading $RG_ARCHIVE..."
           curl -fSL -o "$TMP_DIR/rg.zip" \
@@ -794,31 +767,17 @@ jobs:
           PYTHON_TARGET: x86_64-pc-windows-msvc
           PYTHON_PLATFORM: windows-x64
           PYTHON_ENTRY: python.exe
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rm -rf resources/runtime/python
           mkdir -p resources/runtime/python
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
-          curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest -o "$TMP_DIR/release.json"
-          ASSET_URL=$(python - "$TMP_DIR/release.json" "$PYTHON_SERIES" "$PYTHON_TARGET" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          release = json.loads(Path(sys.argv[1]).read_text())
-          version = sys.argv[2]
-          target = sys.argv[3]
-          suffix = f"-{target}-install_only.tar.gz"
-          prefix = f"cpython-{version}+"
-          for asset in release["assets"]:
-              name = asset["name"]
-              if name.startswith(prefix) and name.endswith(suffix):
-                  print(asset["browser_download_url"])
-                  break
-          else:
-              raise SystemExit(f"Unable to find python-build-standalone asset for {version} / {target}")
-          PY
-          )
+          ASSET_URL=$(gh release view --repo astral-sh/python-build-standalone --json assets -q ".assets[] | select(.name | startswith(\"cpython-$PYTHON_SERIES+\")) | select(.name | endswith(\"-$PYTHON_TARGET-install_only.tar.gz\")) | .url" | head -n 1)
+          if [ -z "$ASSET_URL" ]; then
+            echo "Unable to find python-build-standalone asset for $PYTHON_SERIES / $PYTHON_TARGET" >&2
+            exit 1
+          fi
           echo "Downloading Python runtime from $ASSET_URL"
           curl -fSL "$ASSET_URL" -o "$TMP_DIR/python-runtime.tar.gz"
           tar -xzf "$TMP_DIR/python-runtime.tar.gz" --strip-components=1 -C resources/runtime/python
