@@ -113,6 +113,23 @@ jobs:
           cp crates/target/x86_64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
           file apps/desktop/resources/bin/tailos
 
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          BUN_ARCHIVE="bun-darwin-x64.zip"
+          BUN_ASSET_URL=$(gh release view --repo oven-sh/bun --json assets -q ".assets[] | select(.name == \"$BUN_ARCHIVE\") | .url")
+          echo "Downloading Bun from $BUN_ASSET_URL"
+          curl -fSL "$BUN_ASSET_URL" -o "$TMP_DIR/bun.zip"
+          unzip -o "$TMP_DIR/bun.zip" -d "$TMP_DIR/bun-extract"
+          cp "$TMP_DIR/bun-extract/bun-darwin-x64/bun" resources/bin/bun
+          chmod +x resources/bin/bun
+          echo "bun version: $(resources/bin/bun --version)"
+
       - name: Download uv runtime
         working-directory: source/apps/desktop
         env:
@@ -250,6 +267,10 @@ jobs:
 
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
+            echo "Missing bundled bun in macOS app resources" >&2
             exit 1
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
@@ -401,6 +422,23 @@ jobs:
           cp crates/target/aarch64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
           file apps/desktop/resources/bin/tailos
 
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          BUN_ARCHIVE="bun-darwin-aarch64.zip"
+          BUN_ASSET_URL=$(gh release view --repo oven-sh/bun --json assets -q ".assets[] | select(.name == \"$BUN_ARCHIVE\") | .url")
+          echo "Downloading Bun from $BUN_ASSET_URL"
+          curl -fSL "$BUN_ASSET_URL" -o "$TMP_DIR/bun.zip"
+          unzip -o "$TMP_DIR/bun.zip" -d "$TMP_DIR/bun-extract"
+          cp "$TMP_DIR/bun-extract/bun-darwin-aarch64/bun" resources/bin/bun
+          chmod +x resources/bin/bun
+          echo "bun version: $(resources/bin/bun --version)"
+
       - name: Download uv runtime
         working-directory: source/apps/desktop
         env:
@@ -532,6 +570,10 @@ jobs:
 
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
+            echo "Missing bundled bun in macOS app resources" >&2
             exit 1
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
@@ -723,6 +765,24 @@ jobs:
           Write-Host "Using dumpbin: $dumpbin"
           & $dumpbin /DEPENDENTS "crates\target\release\tailos.exe"
 
+      - name: Download Bun runtime
+        working-directory: source/apps/desktop
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p resources/bin
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          BUN_ARCHIVE="bun-windows-x64.zip"
+          BUN_ASSET_URL=$(gh release view --repo oven-sh/bun --json assets -q ".assets[] | select(.name == \"$BUN_ARCHIVE\") | .url")
+          echo "Downloading Bun from $BUN_ASSET_URL"
+          curl -fSL "$BUN_ASSET_URL" -o "$TMP_DIR/bun.zip"
+          unzip -o "$TMP_DIR/bun.zip" -d "$TMP_DIR/bun-extract"
+          cp "$TMP_DIR/bun-extract/bun-windows-x64/bun.exe" resources/bin/bun.exe
+          echo "bun downloaded: $(ls -lh resources/bin/bun.exe)"
+          resources/bin/bun.exe --version
+
       - name: Download uv runtime
         working-directory: source/apps/desktop
         shell: bash
@@ -862,6 +922,10 @@ jobs:
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/rg.exe' -type f | grep -q .; then
             echo "Missing bundled rg.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/bun.exe' -type f | grep -q .; then
+            echo "Missing bundled bun.exe in Windows unpacked app resources" >&2
             exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/uv.exe' -type f | grep -q .; then
