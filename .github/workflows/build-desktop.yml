@@ -111,10 +111,12 @@ jobs:
         working-directory: source
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release -p tailos-cli --target x86_64-apple-darwin --manifest-path crates/Cargo.toml
+          cargo build --release -p tailos-cli --bins --target x86_64-apple-darwin --manifest-path crates/Cargo.toml
           mkdir -p apps/desktop/resources/bin
-          cp crates/target/x86_64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
-          file apps/desktop/resources/bin/tailos
+          find crates/target/x86_64-apple-darwin/release -maxdepth 1 -type f -perm +111 -name 'tailos*' -exec cp {} apps/desktop/resources/bin/ \;
+          test -x apps/desktop/resources/bin/tailos
+          test -x apps/desktop/resources/bin/tailos-python-shim
+          file apps/desktop/resources/bin/tailos*
 
       - name: Download Bun runtime
         working-directory: source/apps/desktop
@@ -413,10 +415,12 @@ jobs:
         working-directory: source
         run: |
           rustup target add aarch64-apple-darwin
-          cargo build --release -p tailos-cli --target aarch64-apple-darwin --manifest-path crates/Cargo.toml
+          cargo build --release -p tailos-cli --bins --target aarch64-apple-darwin --manifest-path crates/Cargo.toml
           mkdir -p apps/desktop/resources/bin
-          cp crates/target/aarch64-apple-darwin/release/tailos apps/desktop/resources/bin/tailos
-          file apps/desktop/resources/bin/tailos
+          find crates/target/aarch64-apple-darwin/release -maxdepth 1 -type f -perm +111 -name 'tailos*' -exec cp {} apps/desktop/resources/bin/ \;
+          test -x apps/desktop/resources/bin/tailos
+          test -x apps/desktop/resources/bin/tailos-python-shim
+          file apps/desktop/resources/bin/tailos*
 
       - name: Download Bun runtime
         working-directory: source/apps/desktop
@@ -710,9 +714,11 @@ jobs:
         working-directory: source
         shell: bash
         run: |
-          cargo build --release -p tailos-cli --manifest-path crates/Cargo.toml
+          cargo build --release -p tailos-cli --bins --manifest-path crates/Cargo.toml
           mkdir -p apps/desktop/resources/bin
-          cp crates/target/release/tailos.exe apps/desktop/resources/bin/
+          cp crates/target/release/tailos*.exe apps/desktop/resources/bin/
+          test -f apps/desktop/resources/bin/tailos.exe
+          test -f apps/desktop/resources/bin/tailos-python-shim.exe
 
       - name: Inspect tailos.exe runtime dependencies
         working-directory: source
