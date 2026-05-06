@@ -1002,7 +1002,7 @@ jobs:
     needs: [build-mac-x64, build-mac-arm64, build-win]
     if: always() && contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) && contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) && contains(fromJSON('["success","skipped"]'), needs.build-win.result) && (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
     steps:
-      - name: Clean old versions on R2 (keep latest 3)
+      - name: Clean old versions on R2 (keep latest 5)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -1020,7 +1020,7 @@ jobs:
             count=0
             for zip in $zips; do
               count=$((count + 1))
-              if [ $count -gt 3 ]; then
+              if [ $count -gt 5 ]; then
                 echo "Deleting old macOS artifact: ${prefix}/$zip"
                 aws s3 rm "s3://${R2_BUCKET}/${prefix}/$zip" \
                   --endpoint-url "${{ secrets.R2_ENDPOINT }}"
@@ -1039,7 +1039,7 @@ jobs:
           COUNT=0
           for exe in $EXES; do
             COUNT=$((COUNT + 1))
-            if [ $COUNT -gt 3 ]; then
+            if [ $COUNT -gt 5 ]; then
               echo "Deleting old Windows artifact: windows/x64/$exe"
               aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/$exe" \
                 --endpoint-url "${{ secrets.R2_ENDPOINT }}"
