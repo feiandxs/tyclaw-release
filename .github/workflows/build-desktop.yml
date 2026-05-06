@@ -90,7 +90,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: source
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter desktop...
 
       - name: Build packages
         working-directory: source
@@ -395,7 +395,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: source
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter desktop...
 
       - name: Build packages
         working-directory: source
@@ -694,7 +694,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: source
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter desktop...
 
       - name: Build packages
         working-directory: source
