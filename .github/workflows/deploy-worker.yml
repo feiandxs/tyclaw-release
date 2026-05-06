@@ -64,7 +64,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: source
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --filter download-worker...
 
       - name: Deploy download worker
         working-directory: source/apps/download-worker
