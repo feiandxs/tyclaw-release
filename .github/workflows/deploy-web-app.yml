@@ -119,6 +119,16 @@ jobs:
             git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
           fi
 
+          if [ ! -f deploy/web-app/.env ]; then
+            if [ ! -f deploy/web-app/.env.example ]; then
+              echo "Missing deploy/web-app/.env and deploy/web-app/.env.example" >&2
+              exit 1
+            fi
+
+            echo "deploy/web-app/.env not found. Creating it from .env.example."
+            cp deploy/web-app/.env.example deploy/web-app/.env
+          fi
+
           sudo -n docker-compose -f deploy/web-app/docker-compose.yml --env-file deploy/web-app/.env up -d --build
           sudo -n docker-compose -f deploy/web-app/docker-compose.yml --env-file deploy/web-app/.env ps
 
