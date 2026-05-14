@@ -106,7 +106,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # Keep rust-cache family naming aligned with prune-actions-cache.yml.
+          prefix-key: v1-rust
           key: ${{ runner.arch }}
+          # Avoid restoring stale cargo/rustup shims from ~/.cargo/bin.
+          cache-bin: "false"
           workspaces: |
             source/crates -> target
 
@@ -410,7 +413,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           key: ${{ runner.arch }}
+          cache-bin: "false"
           workspaces: |
             source/crates -> target
 
@@ -709,7 +714,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           key: ${{ runner.arch }}
+          cache-bin: "false"
           workspaces: |
             source/crates -> target
 
