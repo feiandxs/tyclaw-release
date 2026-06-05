@@ -97,7 +97,7 @@ jobs:
 
       - name: Build packages
         working-directory: source
-        run: pnpm --filter './packages/*' build
+        run: pnpm --filter 'desktop^...' build
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -405,7 +405,7 @@ jobs:
 
       - name: Build packages
         working-directory: source
-        run: pnpm --filter './packages/*' build
+        run: pnpm --filter 'desktop^...' build
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -706,7 +706,7 @@ jobs:
 
       - name: Build packages
         working-directory: source
-        run: pnpm --filter './packages/*' build
+        run: pnpm --filter 'desktop^...' build
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
