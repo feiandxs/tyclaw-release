@@ -35,6 +35,7 @@ jobs:
           family_jq='
             def family:
               if (.key | startswith("Windows-electron-")) then "Windows-electron"
+              elif (.key | startswith("Windows-runtime-")) then (.key | split("-") | .[0:4] | join("-"))
               elif (.key | startswith("macOS-electron-")) then "macOS-electron"
               elif (.key | startswith("macOS-runtime-")) then (.key | split("-") | .[0:4] | join("-"))
               elif (.key | startswith("node-cache-")) then (.key | split("-") | .[0:4] | join("-"))
