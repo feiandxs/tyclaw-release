@@ -124,8 +124,9 @@ jobs:
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
 
-      - name: Cache macOS x64 runtime downloads
-        uses: actions/cache@v5
+      - name: Restore macOS x64 runtime downloads
+        id: macos_x64_runtime_cache
+        uses: actions/cache/restore@v5
         with:
           path: source/.runtime-cache/macos-x64
           # Keep this prefix aligned with prune-actions-cache.yml family rules.
@@ -152,7 +153,23 @@ jobs:
             local tmp="${output}.tmp"
             rm -f "$tmp"
             echo "Downloading $url"
-            curl -fSL --retry 5 --retry-delay 10 --retry-max-time 300 --connect-timeout 20 "$url" -o "$tmp"
+
+            local attempt=1
+            local max_attempts=6
+            until curl -fSL --connect-timeout 20 --max-time 300 "$url" -o "$tmp"; do
+              local status=$?
+              rm -f "$tmp"
+
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Download failed after $attempt attempts: $url" >&2
+                return "$status"
+              fi
+
+              echo "Download failed with exit code $status. Retrying in 10s ($attempt/$max_attempts)..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+
             mv "$tmp" "$output"
           }
 
@@ -183,6 +200,13 @@ jobs:
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
           echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+
+      - name: Save macOS x64 runtime downloads
+        if: steps.macos_x64_runtime_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: source/.runtime-cache/macos-x64
+          key: ${{ steps.macos_x64_runtime_cache.outputs.cache-primary-key }}
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
@@ -439,8 +463,9 @@ jobs:
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
 
-      - name: Cache macOS arm64 runtime downloads
-        uses: actions/cache@v5
+      - name: Restore macOS arm64 runtime downloads
+        id: macos_arm64_runtime_cache
+        uses: actions/cache/restore@v5
         with:
           path: source/.runtime-cache/macos-arm64
           key: ${{ runner.os }}-runtime-macos-arm64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}
@@ -466,7 +491,23 @@ jobs:
             local tmp="${output}.tmp"
             rm -f "$tmp"
             echo "Downloading $url"
-            curl -fSL --retry 5 --retry-delay 10 --retry-max-time 300 --connect-timeout 20 "$url" -o "$tmp"
+
+            local attempt=1
+            local max_attempts=6
+            until curl -fSL --connect-timeout 20 --max-time 300 "$url" -o "$tmp"; do
+              local status=$?
+              rm -f "$tmp"
+
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Download failed after $attempt attempts: $url" >&2
+                return "$status"
+              fi
+
+              echo "Download failed with exit code $status. Retrying in 10s ($attempt/$max_attempts)..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+
             mv "$tmp" "$output"
           }
 
@@ -497,6 +538,13 @@ jobs:
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
           echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+
+      - name: Save macOS arm64 runtime downloads
+        if: steps.macos_arm64_runtime_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: source/.runtime-cache/macos-arm64
+          key: ${{ steps.macos_arm64_runtime_cache.outputs.cache-primary-key }}
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
