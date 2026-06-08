@@ -124,53 +124,62 @@ jobs:
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
 
-      - name: Download Bun runtime
+      - name: Cache macOS x64 runtime downloads
+        uses: actions/cache@v5
+        with:
+          path: source/.runtime-cache/macos-x64
+          # Keep this prefix aligned with prune-actions-cache.yml family rules.
+          key: ${{ runner.os }}-runtime-macos-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}
+
+      - name: Prepare macOS x64 runtime binaries
         working-directory: source/apps/desktop
         run: |
+          set -euo pipefail
+
           mkdir -p resources/bin
+          CACHE_DIR="../../.runtime-cache/macos-x64"
+          mkdir -p "$CACHE_DIR"
+
+          download_cached() {
+            local url="$1"
+            local output="$2"
+
+            if [ -s "$output" ]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+
+            local tmp="${output}.tmp"
+            rm -f "$tmp"
+            echo "Downloading $url"
+            curl -fSL --retry 5 --retry-delay 10 --retry-max-time 300 --connect-timeout 20 "$url" -o "$tmp"
+            mv "$tmp" "$output"
+          }
+
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
+
           BUN_ARCHIVE="bun-darwin-x64.zip"
           BUN_ASSET_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_ARCHIVE}"
-          echo "Downloading Bun from $BUN_ASSET_URL"
-          curl -fSL "$BUN_ASSET_URL" -o "$TMP_DIR/bun.zip"
-          unzip -o "$TMP_DIR/bun.zip" -d "$TMP_DIR/bun-extract"
+          download_cached "$BUN_ASSET_URL" "$CACHE_DIR/$BUN_ARCHIVE"
+          unzip -o "$CACHE_DIR/$BUN_ARCHIVE" -d "$TMP_DIR/bun-extract"
           cp "$TMP_DIR/bun-extract/bun-darwin-x64/bun" resources/bin/bun
           chmod +x resources/bin/bun
           echo "bun version: $(resources/bin/bun --version)"
 
-      - name: Download uv runtime
-        working-directory: source/apps/desktop
-        run: |
-          mkdir -p resources/bin
-          TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
-          UV_ASSET_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-apple-darwin.tar.gz"
-          echo "Downloading uv from $UV_ASSET_URL"
-          curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
-          tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
+          UV_ARCHIVE="uv-x86_64-apple-darwin.tar.gz"
+          UV_ASSET_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}"
+          download_cached "$UV_ASSET_URL" "$CACHE_DIR/$UV_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$UV_ARCHIVE" -C "$TMP_DIR"
           cp "$TMP_DIR/uv-x86_64-apple-darwin/uv" resources/bin/uv
           chmod +x resources/bin/uv
           echo "uv version: $(resources/bin/uv --version)"
 
-      - name: Download ripgrep runtime
-        working-directory: source/apps/desktop
-        run: |
-          mkdir -p resources/bin
-          TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-            RG_ARCH="aarch64"
-          else
-            RG_ARCH="x86_64"
-          fi
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_ARCH}-apple-darwin.tar.gz"
-          echo "Downloading $RG_ARCHIVE..."
-          curl -fSL -o "$TMP_DIR/rg.tar.gz" \
-            "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          tar -xzf "$TMP_DIR/rg.tar.gz" -C "$TMP_DIR"
-          RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-${RG_ARCH}-apple-darwin"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-x86_64-apple-darwin.tar.gz"
+          RG_ASSET_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          download_cached "$RG_ASSET_URL" "$CACHE_DIR/$RG_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$RG_ARCHIVE" -C "$TMP_DIR"
+          RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-x86_64-apple-darwin"
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
           echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
@@ -430,46 +439,60 @@ jobs:
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
 
-      - name: Download Bun runtime
+      - name: Cache macOS arm64 runtime downloads
+        uses: actions/cache@v5
+        with:
+          path: source/.runtime-cache/macos-arm64
+          key: ${{ runner.os }}-runtime-macos-arm64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}
+
+      - name: Prepare macOS arm64 runtime binaries
         working-directory: source/apps/desktop
         run: |
+          set -euo pipefail
+
           mkdir -p resources/bin
+          CACHE_DIR="../../.runtime-cache/macos-arm64"
+          mkdir -p "$CACHE_DIR"
+
+          download_cached() {
+            local url="$1"
+            local output="$2"
+
+            if [ -s "$output" ]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+
+            local tmp="${output}.tmp"
+            rm -f "$tmp"
+            echo "Downloading $url"
+            curl -fSL --retry 5 --retry-delay 10 --retry-max-time 300 --connect-timeout 20 "$url" -o "$tmp"
+            mv "$tmp" "$output"
+          }
+
           TMP_DIR=$(mktemp -d)
           trap 'rm -rf "$TMP_DIR"' EXIT
+
           BUN_ARCHIVE="bun-darwin-aarch64.zip"
           BUN_ASSET_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_ARCHIVE}"
-          echo "Downloading Bun from $BUN_ASSET_URL"
-          curl -fSL "$BUN_ASSET_URL" -o "$TMP_DIR/bun.zip"
-          unzip -o "$TMP_DIR/bun.zip" -d "$TMP_DIR/bun-extract"
+          download_cached "$BUN_ASSET_URL" "$CACHE_DIR/$BUN_ARCHIVE"
+          unzip -o "$CACHE_DIR/$BUN_ARCHIVE" -d "$TMP_DIR/bun-extract"
           cp "$TMP_DIR/bun-extract/bun-darwin-aarch64/bun" resources/bin/bun
           chmod +x resources/bin/bun
           echo "bun version: $(resources/bin/bun --version)"
 
-      - name: Download uv runtime
-        working-directory: source/apps/desktop
-        run: |
-          mkdir -p resources/bin
-          TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
-          UV_ASSET_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-aarch64-apple-darwin.tar.gz"
-          echo "Downloading uv from $UV_ASSET_URL"
-          curl -fSL "$UV_ASSET_URL" -o "$TMP_DIR/uv.tar.gz"
-          tar -xzf "$TMP_DIR/uv.tar.gz" -C "$TMP_DIR"
+          UV_ARCHIVE="uv-aarch64-apple-darwin.tar.gz"
+          UV_ASSET_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}"
+          download_cached "$UV_ASSET_URL" "$CACHE_DIR/$UV_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$UV_ARCHIVE" -C "$TMP_DIR"
           cp "$TMP_DIR/uv-aarch64-apple-darwin/uv" resources/bin/uv
           chmod +x resources/bin/uv
           echo "uv version: $(resources/bin/uv --version)"
 
-      - name: Download ripgrep runtime
-        working-directory: source/apps/desktop
-        run: |
-          mkdir -p resources/bin
-          TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-aarch64-apple-darwin.tar.gz"
-          echo "Downloading $RG_ARCHIVE..."
-          curl -fSL -o "$TMP_DIR/rg.tar.gz" \
-            "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          tar -xzf "$TMP_DIR/rg.tar.gz" -C "$TMP_DIR"
+          RG_ASSET_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          download_cached "$RG_ASSET_URL" "$CACHE_DIR/$RG_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$RG_ARCHIVE" -C "$TMP_DIR"
           RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-aarch64-apple-darwin"
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
