@@ -18,15 +18,16 @@ on:
         type: choice
         options:
           - production
+          - development
 
 concurrency:
-  group: deploy-api-production
+  group: deploy-api-${{ github.event.inputs.environment || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.event.inputs.environment || 'production' }}
     steps:
       - name: Resolve deploy inputs
         id: ref

@@ -11,15 +11,23 @@ on:
         description: "Optional GitLab commit SHA to deploy. When set, it overrides branch HEAD."
         required: false
         default: ""
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - development
 
 concurrency:
-  group: deploy-console-production
+  group: deploy-console-${{ github.event.inputs.environment || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.event.inputs.environment || 'production' }}
     steps:
       - name: Resolve deploy inputs
         id: ref
