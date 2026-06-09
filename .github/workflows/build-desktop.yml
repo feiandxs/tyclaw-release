@@ -208,9 +208,31 @@ jobs:
           path: source/.runtime-cache/macos-x64
           key: ${{ steps.macos_x64_runtime_cache.outputs.cache-primary-key }}
 
+      - name: Resolve desktop release channel
+        id: release_channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
-        run: pnpm run build:release-assets
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            pnpm run build:release-assets:dev
+          else
+            pnpm run build:release-assets
+          fi
 
       - name: Hoist external deps for asar
         working-directory: source/apps/desktop
@@ -236,9 +258,13 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -267,14 +293,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac zip --x64 --publish never
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            TAILOS_DESKTOP_CHANNEL=dev pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+          else
+            pnpm exec electron-builder --mac zip --x64 --publish never
+          fi
 
       - name: Verify macOS x64 release artifacts
         working-directory: source/apps/desktop
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
-          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
@@ -546,9 +577,31 @@ jobs:
           path: source/.runtime-cache/macos-arm64
           key: ${{ steps.macos_arm64_runtime_cache.outputs.cache-primary-key }}
 
+      - name: Resolve desktop release channel
+        id: release_channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
-        run: pnpm run build:release-assets
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            pnpm run build:release-assets:dev
+          else
+            pnpm run build:release-assets
+          fi
 
       - name: Hoist external deps for asar
         working-directory: source/apps/desktop
@@ -574,9 +627,13 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -605,14 +662,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec electron-builder --mac zip --arm64 --publish never
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            TAILOS_DESKTOP_CHANNEL=dev pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+          else
+            pnpm exec electron-builder --mac zip --arm64 --publish never
+          fi
 
       - name: Verify macOS arm64 release artifacts
         working-directory: source/apps/desktop
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
-          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
@@ -965,9 +1027,32 @@ jobs:
           path: source/.runtime-cache/windows-x64
           key: ${{ steps.windows_x64_runtime_cache.outputs.cache-primary-key }}
 
+      - name: Resolve desktop release channel
+        id: release_channel
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
-        run: pnpm run build:release-assets
+        run: |
+          if ("${{ steps.release_channel.outputs.desktop_channel }}" -eq "dev") {
+            pnpm run build:release-assets:dev
+          } else {
+            pnpm run build:release-assets
+          }
 
       - name: Hoist external deps for asar
         working-directory: source/apps/desktop
@@ -995,21 +1080,31 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Windows unpacked app
         working-directory: source/apps/desktop
-        run: pnpm run package:dir:win
+        shell: bash
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            pnpm run package:dir:win:dev
+          else
+            pnpm run package:dir:win
+          fi
 
       - name: Smoke test Windows unpacked app
         working-directory: source/apps/desktop
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.version }}"
-          APP_NAME=$(node -p "require('./package.json').productName || require('./package.json').name")
+          APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
           APP_EXE=$(
             find "release/${VERSION}" \
@@ -1042,7 +1137,13 @@ jobs:
 
       - name: Package Windows app (unsigned)
         working-directory: source/apps/desktop
-        run: pnpm run package:release:win
+        shell: bash
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            pnpm run package:release:win:dev
+          else
+            pnpm run package:release:win
+          fi
 
       - name: Prepare changelog
         working-directory: source/apps/desktop
