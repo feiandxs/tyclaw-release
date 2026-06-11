@@ -1164,6 +1164,7 @@ jobs:
           VERSION="${{ steps.pkg.outputs.version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
+          PRODUCT_NAME="${{ steps.upload.outputs.desktop_product_name }}"
           STAGING_DIR=$(mktemp -d)
           ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
           WIN_TARGET="${ROOT_TARGET}/windows/x64"
@@ -1190,6 +1191,10 @@ jobs:
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
+            if [[ "$BASENAME" != "${PRODUCT_NAME}-Windows-${VERSION}-Setup.exe"* ]]; then
+              echo "Skipping non-${PRODUCT_NAME} Windows artifact: $BASENAME"
+              continue
+            fi
             if [[ "$UPLOAD_VERSION" == dev-* ]]; then
               TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
             else
@@ -1197,6 +1202,13 @@ jobs:
             fi
             cp "$f" "$STAGING_DIR/$TARGET_NAME"
           done
+
+          if ! find "$STAGING_DIR" -maxdepth 1 -name "${PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe" -type f | grep -q .; then
+            echo "Missing staged ${PRODUCT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
+            echo "Release directory contents:" >&2
+            find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; >&2
+            exit 1
+          fi
 
           # Keep stable updater metadata tied to tagged releases only.
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
