@@ -858,10 +858,16 @@ jobs:
         shell: bash
         run: |
           cargo build --release -p tailos-cli --bins --manifest-path crates/Cargo.toml
+          cargo build --release --bin tailos-command-runner --bin tailos-windows-sandbox-setup --manifest-path crates/vendor/codex-windows-sandbox/Cargo.toml --target-dir crates/target
           mkdir -p apps/desktop/resources/bin
-          cp crates/target/release/tailos*.exe apps/desktop/resources/bin/
+          cp crates/target/release/tailos.exe apps/desktop/resources/bin/
+          cp crates/target/release/tailos-python-shim.exe apps/desktop/resources/bin/
+          cp crates/target/release/tailos-command-runner.exe apps/desktop/resources/bin/
+          cp crates/target/release/tailos-windows-sandbox-setup.exe apps/desktop/resources/bin/
           test -f apps/desktop/resources/bin/tailos.exe
           test -f apps/desktop/resources/bin/tailos-python-shim.exe
+          test -f apps/desktop/resources/bin/tailos-command-runner.exe
+          test -f apps/desktop/resources/bin/tailos-windows-sandbox-setup.exe
 
       - name: Inspect tailos.exe runtime dependencies
         working-directory: source
@@ -1125,6 +1131,14 @@ jobs:
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/uv.exe' -type f | grep -q .; then
             echo "Missing bundled uv.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-command-runner.exe' -type f | grep -q .; then
+            echo "Missing bundled tailos-command-runner.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-windows-sandbox-setup.exe' -type f | grep -q .; then
+            echo "Missing bundled tailos-windows-sandbox-setup.exe in Windows unpacked app resources" >&2
             exit 1
           fi
           BUNDLED_PYTHON=$(find "release/${VERSION}" -path '*/win-unpacked/resources/runtime/python/python.exe' -type f | head -n 1)
