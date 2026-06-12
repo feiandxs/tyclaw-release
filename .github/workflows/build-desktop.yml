@@ -243,8 +243,15 @@ jobs:
         working-directory: source/apps/desktop
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          else
+            APP_VERSION="$VERSION"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"
+          echo "App version: $APP_VERSION"
 
       - name: Resolve upload channel
         id: upload
@@ -261,7 +268,7 @@ jobs:
             echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
@@ -295,7 +302,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_CHANNEL=dev pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+            TAILOS_DESKTOP_CHANNEL=dev TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           else
             pnpm exec electron-builder --mac zip --x64 --publish never
           fi
@@ -303,7 +310,7 @@ jobs:
       - name: Verify macOS x64 release artifacts
         working-directory: source/apps/desktop
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
@@ -314,8 +321,12 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "$RELEASE_DIR/latest-mac.yml" ]; then
-            echo "Missing latest-mac.yml in $RELEASE_DIR" >&2
+          METADATA_FILE="latest-mac.yml"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            METADATA_FILE="dev-mac.yml"
+          fi
+          if [ ! -f "$RELEASE_DIR/$METADATA_FILE" ]; then
+            echo "Missing $METADATA_FILE in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -360,7 +371,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
           STAGING_DIR=$(mktemp -d)
@@ -374,7 +385,7 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           fi
 
-          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
@@ -388,18 +399,13 @@ jobs:
 
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
-            BASENAME=$(basename "$f")
-            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
-            else
-              TARGET_NAME="$BASENAME"
-            fi
-            cp "$f" "$STAGING_DIR/$TARGET_NAME"
+            cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
-          # Keep stable updater metadata tied to tagged releases only.
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
+          else
+            cp "$RELEASE_DIR"/dev-mac.yml "$STAGING_DIR"/
           fi
 
           for f in "$STAGING_DIR"/*; do
@@ -612,8 +618,15 @@ jobs:
         working-directory: source/apps/desktop
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          else
+            APP_VERSION="$VERSION"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"
+          echo "App version: $APP_VERSION"
 
       - name: Resolve upload channel
         id: upload
@@ -630,7 +643,7 @@ jobs:
             echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
@@ -664,7 +677,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_CHANNEL=dev pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+            TAILOS_DESKTOP_CHANNEL=dev TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           else
             pnpm exec electron-builder --mac zip --arm64 --publish never
           fi
@@ -672,7 +685,7 @@ jobs:
       - name: Verify macOS arm64 release artifacts
         working-directory: source/apps/desktop
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
@@ -683,8 +696,12 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "$RELEASE_DIR/latest-mac.yml" ]; then
-            echo "Missing latest-mac.yml in $RELEASE_DIR" >&2
+          METADATA_FILE="latest-mac.yml"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            METADATA_FILE="dev-mac.yml"
+          fi
+          if [ ! -f "$RELEASE_DIR/$METADATA_FILE" ]; then
+            echo "Missing $METADATA_FILE in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -729,7 +746,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
           STAGING_DIR=$(mktemp -d)
@@ -743,7 +760,7 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           fi
 
-          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
@@ -757,18 +774,13 @@ jobs:
 
           for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
-            BASENAME=$(basename "$f")
-            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
-            else
-              TARGET_NAME="$BASENAME"
-            fi
-            cp "$f" "$STAGING_DIR/$TARGET_NAME"
+            cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
-          # Keep stable updater metadata tied to tagged releases only.
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
+          else
+            cp "$RELEASE_DIR"/dev-mac.yml "$STAGING_DIR"/
           fi
 
           for f in "$STAGING_DIR"/*; do
@@ -1070,8 +1082,15 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+            APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          else
+            APP_VERSION="$VERSION"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"
+          echo "App version: $APP_VERSION"
 
       - name: Resolve upload channel
         id: upload
@@ -1089,7 +1108,7 @@ jobs:
             echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "artifact_version=dev-${{ steps.git_ref.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
@@ -1100,7 +1119,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            pnpm run package:dir:win:dev
+            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:dir:win:dev
           else
             pnpm run package:dir:win
           fi
@@ -1109,7 +1128,7 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
           LEGACY_APP_NAME="TyClaw"
           APP_EXE=$(
@@ -1154,7 +1173,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            pnpm run package:release:win:dev
+            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:release:win:dev
           else
             pnpm run package:release:win
           fi
@@ -1163,7 +1182,7 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           mkdir -p "release/${VERSION}"
           cp changelog.yml "release/${VERSION}/"
 
@@ -1175,7 +1194,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
+          VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
           PRODUCT_NAME="${{ steps.upload.outputs.desktop_product_name }}"
@@ -1190,7 +1209,7 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           fi
 
-          if [[ "$UPLOAD_VERSION" == dev-* ]]; then
+          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
             EXISTING_DEV_FILES=$(aws s3 ls "${WIN_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
@@ -1209,12 +1228,7 @@ jobs:
               echo "Skipping non-${PRODUCT_NAME} Windows artifact: $BASENAME"
               continue
             fi
-            if [[ "$UPLOAD_VERSION" == dev-* ]]; then
-              TARGET_NAME="${BASENAME//-${VERSION}-/-${UPLOAD_VERSION}-}"
-            else
-              TARGET_NAME="$BASENAME"
-            fi
-            cp "$f" "$STAGING_DIR/$TARGET_NAME"
+            cp "$f" "$STAGING_DIR/$BASENAME"
           done
 
           if ! find "$STAGING_DIR" -maxdepth 1 -name "${PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe" -type f | grep -q .; then
@@ -1224,9 +1238,10 @@ jobs:
             exit 1
           fi
 
-          # Keep stable updater metadata tied to tagged releases only.
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
+          else
+            cp "$RELEASE_DIR"/dev.yml "$STAGING_DIR"/
           fi
 
           for f in "$STAGING_DIR"/*; do
