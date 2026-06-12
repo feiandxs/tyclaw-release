@@ -1224,14 +1224,25 @@ jobs:
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if [[ "$BASENAME" != "${PRODUCT_NAME}-Windows-${VERSION}-Setup.exe"* ]]; then
+            if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+              EXPECTED_PREFIX="${PRODUCT_NAME}-Windows-${VERSION}-Setup.exe"
+            else
+              EXPECTED_PREFIX="${PRODUCT_NAME}-${VERSION}-win-x64.exe"
+            fi
+            if [[ "$BASENAME" != "$EXPECTED_PREFIX"* ]]; then
               echo "Skipping non-${PRODUCT_NAME} Windows artifact: $BASENAME"
               continue
             fi
             cp "$f" "$STAGING_DIR/$BASENAME"
           done
 
-          if ! find "$STAGING_DIR" -maxdepth 1 -name "${PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe" -type f | grep -q .; then
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_INSTALLER="${PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe"
+          else
+            EXPECTED_INSTALLER="${PRODUCT_NAME}-${UPLOAD_VERSION}-win-x64.exe"
+          fi
+
+          if ! find "$STAGING_DIR" -maxdepth 1 -name "$EXPECTED_INSTALLER" -type f | grep -q .; then
             echo "Missing staged ${PRODUCT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
             echo "Release directory contents:" >&2
             find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; >&2
