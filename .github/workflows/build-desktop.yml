@@ -218,18 +218,18 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            pnpm run build:release-assets:dev
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            pnpm run build:release-assets:preview
           else
             pnpm run build:release-assets
           fi
@@ -243,7 +243,7 @@ jobs:
         working-directory: source/apps/desktop
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
           else
             APP_VERSION="$VERSION"
@@ -265,12 +265,12 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
@@ -301,8 +301,8 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_CHANNEL=dev TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           else
             pnpm exec electron-builder --mac zip --x64 --publish never
           fi
@@ -322,7 +322,7 @@ jobs:
           fi
 
           METADATA_FILE="latest-mac.yml"
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             METADATA_FILE="dev-mac.yml"
           fi
           if [ ! -f "$RELEASE_DIR/$METADATA_FILE" ]; then
@@ -593,18 +593,18 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            pnpm run build:release-assets:dev
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            pnpm run build:release-assets:preview
           else
             pnpm run build:release-assets
           fi
@@ -618,7 +618,7 @@ jobs:
         working-directory: source/apps/desktop
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
           else
             APP_VERSION="$VERSION"
@@ -640,12 +640,12 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
@@ -676,8 +676,8 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_CHANNEL=dev TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           else
             pnpm exec electron-builder --mac zip --arm64 --publish never
           fi
@@ -697,7 +697,7 @@ jobs:
           fi
 
           METADATA_FILE="latest-mac.yml"
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             METADATA_FILE="dev-mac.yml"
           fi
           if [ ! -f "$RELEASE_DIR/$METADATA_FILE" ]; then
@@ -1056,18 +1056,18 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
         working-directory: source/apps/desktop
         run: |
-          if ("${{ steps.release_channel.outputs.desktop_channel }}" -eq "dev") {
-            pnpm run build:release-assets:dev
+          if ("${{ steps.release_channel.outputs.desktop_channel }}" -eq "preview") {
+            pnpm run build:release-assets:preview
           } else {
             pnpm run build:release-assets
           }
@@ -1082,7 +1082,7 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
           else
             APP_VERSION="$VERSION"
@@ -1105,12 +1105,12 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
@@ -1118,8 +1118,8 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:dir:win:dev
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:dir:win:preview
           else
             pnpm run package:dir:win
           fi
@@ -1172,8 +1172,8 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "dev" ]; then
-            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:release:win:dev
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:release:win:preview
           else
             pnpm run package:release:win
           fi
