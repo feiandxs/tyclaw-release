@@ -9,6 +9,9 @@
 #   - Windows x64       : tailos.exe, tailos-python-shim.exe,
 #                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe
 #
+# 结构：prepare-release 先建好 Release（串行化，避免多平台并发创建竞态），
+#       各平台 job needs 它、只上传自己的 asset（gh release upload --clobber）。
+#
 # 触发：手动 workflow_dispatch（version + os），或 repository_dispatch（GitLab CI 远程触发）。
 # Release tag：runtime-v<version>（独立前缀，避免与桌面发布 tag 撞车）。
 
@@ -47,7 +50,40 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # 先建好 Release（一次），平台 job 只往里上传 asset，避免并发创建竞态。
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - name: Resolve version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          TAG="runtime-v${VERSION}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, reuse it."
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Runtime v${VERSION}" \
+              --notes "tailos-core runtime ${VERSION}. Prebuilt binaries per platform (tar.gz/zip + .sha256)." \
+              --target main
+          fi
+
+  # ---------------------------------------------------------------------------
   build-core-mac-x64:
+    needs: prepare-release
     if: >-
       ${{
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'macos-x64')) ||
@@ -58,11 +94,10 @@ jobs:
       - name: Resolve inputs
         id: vars
         run: |
+          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -111,19 +146,17 @@ jobs:
           shasum -a 256 "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: runtime-v${{ steps.vars.outputs.version }}
-          name: Runtime v${{ steps.vars.outputs.version }}
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.pkg.outputs.asset }}
-            ${{ steps.pkg.outputs.asset }}.sha256
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
+            --repo "${{ github.repository }}" --clobber
 
   # ---------------------------------------------------------------------------
   build-core-mac-arm64:
+    needs: prepare-release
     if: >-
       ${{
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'macos-arm64')) ||
@@ -134,11 +167,10 @@ jobs:
       - name: Resolve inputs
         id: vars
         run: |
+          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -185,19 +217,17 @@ jobs:
           shasum -a 256 "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: runtime-v${{ steps.vars.outputs.version }}
-          name: Runtime v${{ steps.vars.outputs.version }}
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.pkg.outputs.asset }}
-            ${{ steps.pkg.outputs.asset }}.sha256
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
+            --repo "${{ github.repository }}" --clobber
 
   # ---------------------------------------------------------------------------
   build-core-win:
+    needs: prepare-release
     if: >-
       ${{
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'windows-x64')) ||
@@ -209,11 +239,10 @@ jobs:
         id: vars
         shell: bash
         run: |
+          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -269,13 +298,11 @@ jobs:
           certutil -hashfile "$ASSET" SHA256 | sed -n '2p' | tr -d ' \r' | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: runtime-v${{ steps.vars.outputs.version }}
-          name: Runtime v${{ steps.vars.outputs.version }}
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.pkg.outputs.asset }}
-            ${{ steps.pkg.outputs.asset }}.sha256
+      - name: Upload to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
+            --repo "${{ github.repository }}" --clobber
