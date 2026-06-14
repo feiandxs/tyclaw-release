@@ -874,7 +874,7 @@ jobs:
           }
 
           Write-Host "Using dumpbin: $dumpbin"
-          & $dumpbin /DEPENDENTS "crates\target\release\tailos.exe"
+          & $dumpbin /DEPENDENTS "apps\desktop\resources\bin\tailos.exe"
 
       - name: Restore Windows x64 runtime downloads
         id: windows_x64_runtime_cache
