@@ -68,7 +68,7 @@ jobs:
 
       - name: Clone tailos-core from GitLab
         run: |
-          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
+          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
           if [ -n "$REF" ]; then
             git clone --depth 1 --branch "$REF" "$REPO_URL" source
@@ -144,7 +144,7 @@ jobs:
 
       - name: Clone tailos-core from GitLab
         run: |
-          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
+          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
           if [ -n "$REF" ]; then
             git clone --depth 1 --branch "$REF" "$REPO_URL" source
@@ -220,7 +220,7 @@ jobs:
       - name: Clone tailos-core from GitLab
         shell: bash
         run: |
-          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
+          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
           if [ -n "$REF" ]; then
             git clone --depth 1 --branch "$REF" "$REPO_URL" source
