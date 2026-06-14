@@ -99,27 +99,12 @@ jobs:
         working-directory: source
         run: pnpm --filter 'desktop^...' build
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Keep rust-cache family naming aligned with prune-actions-cache.yml.
-          prefix-key: v1-rust
-          key: ${{ runner.arch }}
-          # Avoid restoring stale cargo/rustup shims from ~/.cargo/bin.
-          cache-bin: "false"
-          workspaces: |
-            source/crates -> target
-
-      - name: Build tailos CLI (x64)
+      - name: Fetch tailos runtime (x64)
         working-directory: source
         run: |
-          rustup target add x86_64-apple-darwin
-          cargo build --release -p tailos-cli --bins --target x86_64-apple-darwin --manifest-path crates/Cargo.toml
-          mkdir -p apps/desktop/resources/bin
-          find crates/target/x86_64-apple-darwin/release -maxdepth 1 -type f -perm +111 -name 'tailos*' -exec cp {} apps/desktop/resources/bin/ \;
+          # 从 tailos-core 的 Release 按 runner 架构拉取预编译 runtime（替代本地 cargo 构建）。
+          # 版本由 tailos-runtime.lock 锁定，校验 sha256 后解包到 resources/bin。
+          node scripts/ensure-tailos-cli.mjs --force
           test -x apps/desktop/resources/bin/tailos
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
@@ -477,25 +462,11 @@ jobs:
         working-directory: source
         run: pnpm --filter 'desktop^...' build
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: v1-rust
-          key: ${{ runner.arch }}
-          cache-bin: "false"
-          workspaces: |
-            source/crates -> target
-
-      - name: Build tailos CLI (arm64)
+      - name: Fetch tailos runtime (arm64)
         working-directory: source
         run: |
-          rustup target add aarch64-apple-darwin
-          cargo build --release -p tailos-cli --bins --target aarch64-apple-darwin --manifest-path crates/Cargo.toml
-          mkdir -p apps/desktop/resources/bin
-          find crates/target/aarch64-apple-darwin/release -maxdepth 1 -type f -perm +111 -name 'tailos*' -exec cp {} apps/desktop/resources/bin/ \;
+          # 从 tailos-core 的 Release 按 runner 架构拉取预编译 runtime（替代本地 cargo 构建）。
+          node scripts/ensure-tailos-cli.mjs --force
           test -x apps/desktop/resources/bin/tailos
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
@@ -853,29 +824,13 @@ jobs:
         working-directory: source
         run: pnpm --filter 'desktop^...' build
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: v1-rust
-          key: ${{ runner.arch }}
-          cache-bin: "false"
-          workspaces: |
-            source/crates -> target
-
-      - name: Build tailos CLI
+      - name: Fetch tailos runtime
         working-directory: source
         shell: bash
         run: |
-          cargo build --release -p tailos-cli --bins --manifest-path crates/Cargo.toml
-          cargo build --release --bin tailos-command-runner --bin tailos-windows-sandbox-setup --manifest-path crates/vendor/codex-windows-sandbox/Cargo.toml --target-dir crates/target
-          mkdir -p apps/desktop/resources/bin
-          cp crates/target/release/tailos.exe apps/desktop/resources/bin/
-          cp crates/target/release/tailos-python-shim.exe apps/desktop/resources/bin/
-          cp crates/target/release/tailos-command-runner.exe apps/desktop/resources/bin/
-          cp crates/target/release/tailos-windows-sandbox-setup.exe apps/desktop/resources/bin/
+          # 从 tailos-core 的 Release 拉取预编译 runtime（替代本地 cargo 构建）。
+          # win32-x64 归档含全部 4 个二进制（主 CLI + python-shim + 沙箱辅助 bin），解包即得。
+          node scripts/ensure-tailos-cli.mjs --force
           test -f apps/desktop/resources/bin/tailos.exe
           test -f apps/desktop/resources/bin/tailos-python-shim.exe
           test -f apps/desktop/resources/bin/tailos-command-runner.exe
