@@ -1127,10 +1127,17 @@ jobs:
         working-directory: source/apps/desktop
         shell: bash
         run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          PREPACKAGED_DIR="release/${VERSION}/win-unpacked"
+          if [ ! -d "$PREPACKAGED_DIR" ]; then
+            echo "Missing prepackaged Windows app: $PREPACKAGED_DIR" >&2
+            exit 1
+          fi
+
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:release:win:preview
+            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --win --prepackaged "$PREPACKAGED_DIR" --publish never
           else
-            pnpm run package:release:win
+            pnpm exec electron-builder --win --prepackaged "$PREPACKAGED_DIR" --publish never
           fi
 
       - name: Prepare changelog
