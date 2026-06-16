@@ -81,6 +81,46 @@ jobs:
               --target main
           fi
 
+      # 契约 schema 包：把 tailos-core 已提交的 tailos-protocol/schema/*.json 打包随 Release 发布，
+      # 供桌面端（tyclaw）按版本拉取、生成 TS 并 CI 防漂（见 tyclaw #1446）。平台无关，发一次即可。
+      - name: Resolve ref
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clone tailos-core (schema source)
+        run: |
+          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
+          REF="${{ steps.ref.outputs.ref }}"
+          if [ -n "$REF" ]; then
+            git clone --depth 1 --branch "$REF" "$REPO_URL" source
+          else
+            git clone --depth 1 "$REPO_URL" source
+          fi
+
+      - name: Package + upload protocol schema bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          SCHEMA_DIR="source/tailos-protocol/schema"
+          if ! ls "$SCHEMA_DIR"/*.json >/dev/null 2>&1; then
+            echo "No protocol schema JSON found at $SCHEMA_DIR" >&2
+            exit 1
+          fi
+          ASSET="tailos-protocol-schema-${VERSION}.tar.gz"
+          # 按文件名排序打包（可移植：GNU/bsd tar 均可）。sha256 由本步计算并随包发布，
+          # 桌面端按记录值校验，不依赖跨次重建的字节确定性。
+          tar -czf "$ASSET" -C "$SCHEMA_DIR" $(cd "$SCHEMA_DIR" && ls *.json | sort)
+          sha256sum "$ASSET" | tee "${ASSET}.sha256"
+          gh release upload "runtime-v${VERSION}" "$ASSET" "${ASSET}.sha256" \
+            --repo "${{ github.repository }}" --clobber
+          echo "Uploaded $ASSET to runtime-v${VERSION}"
+
   # ---------------------------------------------------------------------------
   build-core-mac-x64:
     needs: prepare-release
