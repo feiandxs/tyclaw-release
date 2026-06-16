@@ -1135,9 +1135,9 @@ jobs:
           fi
 
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --win --prepackaged "$PREPACKAGED_DIR" --publish never
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --win --prepackaged "$PREPACKAGED_DIR" --publish never
           else
-            pnpm exec electron-builder --win --prepackaged "$PREPACKAGED_DIR" --publish never
+            pnpm exec electron-builder --config electron-builder.config.cjs --win --prepackaged "$PREPACKAGED_DIR" --publish never
           fi
 
       - name: Prepare changelog
