@@ -1069,14 +1069,14 @@ jobs:
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build Windows unpacked app
+      - name: Build Windows app
         working-directory: source/apps/desktop
         shell: bash
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm run package:dir:win:preview
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --win --publish never
           else
-            pnpm run package:dir:win
+            pnpm exec electron-builder --config electron-builder.config.cjs --win --publish never
           fi
 
       - name: Smoke test Windows unpacked app
@@ -1115,6 +1115,15 @@ jobs:
             echo "Missing bundled tailos-windows-sandbox-setup.exe in Windows unpacked app resources" >&2
             exit 1
           fi
+          APP_UPDATE_YML=$(find "release/${VERSION}" -path '*/win-unpacked/resources/app-update.yml' -type f | head -n 1)
+          if [ -z "$APP_UPDATE_YML" ]; then
+            echo "Missing app-update.yml in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! grep -q 'provider: generic' "$APP_UPDATE_YML"; then
+            echo "app-update.yml does not contain generic provider config" >&2
+            exit 1
+          fi
           BUNDLED_PYTHON=$(find "release/${VERSION}" -path '*/win-unpacked/resources/runtime/python/python.exe' -type f | head -n 1)
           if [ -z "$BUNDLED_PYTHON" ]; then
             echo "Missing bundled Python runtime in Windows unpacked app resources" >&2
@@ -1122,23 +1131,6 @@ jobs:
           fi
           "$BUNDLED_PYTHON" --version
           node scripts/smoke-test-app.mjs "$APP_EXE"
-
-      - name: Package Windows app (unsigned)
-        working-directory: source/apps/desktop
-        shell: bash
-        run: |
-          VERSION="${{ steps.pkg.outputs.app_version }}"
-          PREPACKAGED_DIR="release/${VERSION}/win-unpacked"
-          if [ ! -d "$PREPACKAGED_DIR" ]; then
-            echo "Missing prepackaged Windows app: $PREPACKAGED_DIR" >&2
-            exit 1
-          fi
-
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --win --prepackaged "$PREPACKAGED_DIR" --publish never
-          else
-            pnpm exec electron-builder --config electron-builder.config.cjs --win --prepackaged "$PREPACKAGED_DIR" --publish never
-          fi
 
       - name: Prepare changelog
         working-directory: source/apps/desktop
