@@ -16,9 +16,14 @@ on:
           - macos-arm64
           - windows-x64
       tag:
-        description: "Git tag to build (optional, defaults to default branch HEAD)"
+        description: "Git tag or branch to build (optional, defaults to default branch HEAD)"
         required: false
         type: string
+      upload_artifacts:
+        description: "Upload built artifacts to R2"
+        required: true
+        default: true
+        type: boolean
 
 env:
   PNPM_VERSION: "11.1.1"
@@ -205,9 +210,11 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -252,11 +259,13 @@ jobs:
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -298,11 +307,21 @@ jobs:
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
+          ARTIFACT_NAME="${{ steps.release_channel.outputs.desktop_artifact_name }}"
           LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
             echo "Expected a macOS zip artifact in $RELEASE_DIR" >&2
+            exit 1
+          fi
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            EXPECTED_ZIP="${ARTIFACT_NAME}-${VERSION}-mac-x64.zip"
+          else
+            EXPECTED_ZIP="${ARTIFACT_NAME}-Mac-${VERSION}-Installer.zip"
+          fi
+          if [ "$(basename "$ZIP_FILE")" != "$EXPECTED_ZIP" ]; then
+            echo "Expected macOS x64 artifact $EXPECTED_ZIP, got $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
@@ -350,6 +369,7 @@ jobs:
           fi
 
       - name: Upload macOS x64 artifacts to R2
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.upload_artifacts == 'true' }}
         working-directory: source/apps/desktop
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -399,6 +419,16 @@ jobs:
             aws s3 cp "$f" "${MAC_TARGET}/$(basename "$f")" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
+
+      - name: List macOS x64 release artifacts
+        if: always()
+        working-directory: source/apps/desktop
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          RELEASE_DIR="release/${VERSION}"
+          if [ -d "$RELEASE_DIR" ]; then
+            find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | sort
+          fi
 
   build-mac-arm64:
     if: >-
@@ -566,9 +596,11 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -613,11 +645,13 @@ jobs:
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -659,11 +693,21 @@ jobs:
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
+          ARTIFACT_NAME="${{ steps.release_channel.outputs.desktop_artifact_name }}"
           LEGACY_APP_NAME="TyClaw"
 
           ZIP_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.zip' | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
             echo "Expected a macOS zip artifact in $RELEASE_DIR" >&2
+            exit 1
+          fi
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            EXPECTED_ZIP="${ARTIFACT_NAME}-${VERSION}-mac-arm64.zip"
+          else
+            EXPECTED_ZIP="${ARTIFACT_NAME}-Mac-${VERSION}-Installer.zip"
+          fi
+          if [ "$(basename "$ZIP_FILE")" != "$EXPECTED_ZIP" ]; then
+            echo "Expected macOS arm64 artifact $EXPECTED_ZIP, got $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
 
@@ -711,6 +755,7 @@ jobs:
           fi
 
       - name: Upload macOS arm64 artifacts to R2
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.upload_artifacts == 'true' }}
         working-directory: source/apps/desktop
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -760,6 +805,16 @@ jobs:
             aws s3 cp "$f" "${MAC_TARGET}/$(basename "$f")" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
+
+      - name: List macOS arm64 release artifacts
+        if: always()
+        working-directory: source/apps/desktop
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          RELEASE_DIR="release/${VERSION}"
+          if [ -d "$RELEASE_DIR" ]; then
+            find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | sort
+          fi
 
   build-win:
     if: >-
@@ -1013,9 +1068,11 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -1062,11 +1119,13 @@ jobs:
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
             echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Windows app
@@ -1132,6 +1191,27 @@ jobs:
           "$BUNDLED_PYTHON" --version
           node scripts/smoke-test-app.mjs "$APP_EXE"
 
+      - name: Verify Windows x64 release artifacts
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
+          ARTIFACT_NAME="${{ steps.upload.outputs.desktop_artifact_name }}"
+          RELEASE_DIR="release/${VERSION}"
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_INSTALLER="${ARTIFACT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe"
+          else
+            EXPECTED_INSTALLER="${ARTIFACT_NAME}-${UPLOAD_VERSION}-win-x64.exe"
+          fi
+
+          if ! find "$RELEASE_DIR" -maxdepth 1 -name "$EXPECTED_INSTALLER" -type f | grep -q .; then
+            echo "Missing ${ARTIFACT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
+            echo "Release directory contents:" >&2
+            find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; >&2
+            exit 1
+          fi
+
       - name: Prepare changelog
         working-directory: source/apps/desktop
         shell: bash
@@ -1141,6 +1221,7 @@ jobs:
           cp changelog.yml "release/${VERSION}/"
 
       - name: Upload to R2
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.upload_artifacts == 'true' }}
         working-directory: source/apps/desktop
         shell: bash
         env:
@@ -1151,7 +1232,7 @@ jobs:
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
-          PRODUCT_NAME="${{ steps.upload.outputs.desktop_product_name }}"
+          PRODUCT_NAME="${{ steps.upload.outputs.desktop_artifact_name }}"
           STAGING_DIR=$(mktemp -d)
           ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
           WIN_TARGET="${ROOT_TARGET}/windows/x64"
@@ -1216,10 +1297,21 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
 
+      - name: List Windows x64 release artifacts
+        if: always()
+        working-directory: source/apps/desktop
+        shell: bash
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          RELEASE_DIR="release/${VERSION}"
+          if [ -d "$RELEASE_DIR" ]; then
+            find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | sort
+          fi
+
   cleanup:
     runs-on: ubuntu-latest
     needs: [build-mac-x64, build-mac-arm64, build-win]
-    if: always() && contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) && contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) && contains(fromJSON('["success","skipped"]'), needs.build-win.result) && (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
+    if: always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.upload_artifacts == 'true') && contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) && contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) && contains(fromJSON('["success","skipped"]'), needs.build-win.result) && (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
     steps:
       - name: Clean old versions on R2
         env:
