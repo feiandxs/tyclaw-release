@@ -1156,6 +1156,21 @@ jobs:
           ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
           WIN_TARGET="${ROOT_TARGET}/windows/x64"
 
+          is_expected_windows_artifact() {
+            local basename="$1"
+            local version="$2"
+
+            if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+              [[ "$basename" == "${PRODUCT_NAME}-Windows-${version}-Setup.exe"* ]] && return 0
+              [[ "$basename" == "Trio-Mate-Windows-${version}-Setup.exe"* ]] && return 0
+            else
+              [[ "$basename" == "${PRODUCT_NAME}-${version}-win-x64.exe"* ]] && return 0
+              [[ "$basename" == "Trio-Mate-Dev-${version}-win-x64.exe"* ]] && return 0
+            fi
+
+            return 1
+          }
+
           pip3 install awscli --quiet
 
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
@@ -1178,30 +1193,30 @@ jobs:
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-              EXPECTED_PREFIX="${PRODUCT_NAME}-Windows-${VERSION}-Setup.exe"
-            else
-              EXPECTED_PREFIX="${PRODUCT_NAME}-${VERSION}-win-x64.exe"
-            fi
-            if [[ "$BASENAME" != "$EXPECTED_PREFIX"* ]]; then
+            if ! is_expected_windows_artifact "$BASENAME" "$VERSION"; then
               echo "Skipping non-${PRODUCT_NAME} Windows artifact: $BASENAME"
               continue
             fi
             cp "$f" "$STAGING_DIR/$BASENAME"
           done
 
-          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-            EXPECTED_INSTALLER="${PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe"
-          else
-            EXPECTED_INSTALLER="${PRODUCT_NAME}-${UPLOAD_VERSION}-win-x64.exe"
-          fi
+          STAGED_INSTALLER=""
+          for f in "$STAGING_DIR"/*.exe; do
+            [ -f "$f" ] || continue
+            BASENAME=$(basename "$f")
+            if is_expected_windows_artifact "$BASENAME" "$UPLOAD_VERSION"; then
+              STAGED_INSTALLER="$BASENAME"
+              break
+            fi
+          done
 
-          if ! find "$STAGING_DIR" -maxdepth 1 -name "$EXPECTED_INSTALLER" -type f | grep -q .; then
+          if [ -z "$STAGED_INSTALLER" ]; then
             echo "Missing staged ${PRODUCT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
             echo "Release directory contents:" >&2
             find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; >&2
             exit 1
           fi
+          echo "Staged Windows installer: $STAGED_INSTALLER"
 
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
             cp "$RELEASE_DIR"/latest.yml "$STAGING_DIR"/
