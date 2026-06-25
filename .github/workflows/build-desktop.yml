@@ -1090,15 +1090,13 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.pkg.outputs.app_version }}"
-          APP_NAME="${{ steps.release_channel.outputs.desktop_product_name }}"
-          LEGACY_APP_NAME="TyClaw"
           APP_EXE=$(
             find "release/${VERSION}" \
-              \( -path "*/win-unpacked/${APP_NAME}.exe" -o -path "*/win-unpacked/${LEGACY_APP_NAME}.exe" \) \
+              -path '*/win-unpacked/*.exe' \
               -type f | head -n 1
           )
           if [ -z "$APP_EXE" ]; then
-            echo "Unable to find ${APP_NAME}.exe or ${LEGACY_APP_NAME}.exe under release/${VERSION}" >&2
+            echo "Unable to find Windows app executable under release/${VERSION}" >&2
             exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/rg.exe' -type f | grep -q .; then
