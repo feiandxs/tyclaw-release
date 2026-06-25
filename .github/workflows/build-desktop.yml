@@ -203,11 +203,11 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -250,13 +250,15 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -564,11 +566,11 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -611,13 +613,15 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import signing certificate
@@ -1011,11 +1015,11 @@ jobs:
           fi
 
           if [ -n "$TAG" ]; then
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
           else
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build desktop (renderer + main)
@@ -1060,13 +1064,15 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
-            echo "desktop_channel=stable" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate" >> "$GITHUB_OUTPUT"
           else
             echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
             echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
             echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "desktop_product_name=TailOS-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Windows app
@@ -1151,25 +1157,10 @@ jobs:
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
           UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
-          PRODUCT_NAME="${{ steps.upload.outputs.desktop_product_name }}"
+          ARTIFACT_PRODUCT_NAME="${{ steps.upload.outputs.desktop_artifact_product_name }}"
           STAGING_DIR=$(mktemp -d)
           ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
           WIN_TARGET="${ROOT_TARGET}/windows/x64"
-
-          is_expected_windows_artifact() {
-            local basename="$1"
-            local version="$2"
-
-            if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-              [[ "$basename" == "${PRODUCT_NAME}-Windows-${version}-Setup.exe"* ]] && return 0
-              [[ "$basename" == "Trio-Mate-Windows-${version}-Setup.exe"* ]] && return 0
-            else
-              [[ "$basename" == "${PRODUCT_NAME}-${version}-win-x64.exe"* ]] && return 0
-              [[ "$basename" == "Trio-Mate-Dev-${version}-win-x64.exe"* ]] && return 0
-            fi
-
-            return 1
-          }
 
           pip3 install awscli --quiet
 
@@ -1193,29 +1184,31 @@ jobs:
           for f in "$RELEASE_DIR"/*.exe "$RELEASE_DIR"/*.blockmap; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            if ! is_expected_windows_artifact "$BASENAME" "$VERSION"; then
-              echo "Skipping non-${PRODUCT_NAME} Windows artifact: $BASENAME"
+            if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+              EXPECTED_PREFIX="${ARTIFACT_PRODUCT_NAME}-Windows-${VERSION}-Setup.exe"
+            else
+              EXPECTED_PREFIX="${ARTIFACT_PRODUCT_NAME}-${VERSION}-win-x64.exe"
+            fi
+            if [[ "$BASENAME" != "$EXPECTED_PREFIX"* ]]; then
+              echo "Skipping non-${ARTIFACT_PRODUCT_NAME} Windows artifact: $BASENAME"
               continue
             fi
             cp "$f" "$STAGING_DIR/$BASENAME"
           done
 
-          STAGED_INSTALLER=""
-          for f in "$STAGING_DIR"/*.exe; do
-            [ -f "$f" ] || continue
-            BASENAME=$(basename "$f")
-            if is_expected_windows_artifact "$BASENAME" "$UPLOAD_VERSION"; then
-              STAGED_INSTALLER="$BASENAME"
-              break
-            fi
-          done
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_INSTALLER="${ARTIFACT_PRODUCT_NAME}-Windows-${UPLOAD_VERSION}-Setup.exe"
+          else
+            EXPECTED_INSTALLER="${ARTIFACT_PRODUCT_NAME}-${UPLOAD_VERSION}-win-x64.exe"
+          fi
 
-          if [ -z "$STAGED_INSTALLER" ]; then
-            echo "Missing staged ${PRODUCT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
+          if ! find "$STAGING_DIR" -maxdepth 1 -name "$EXPECTED_INSTALLER" -type f | grep -q .; then
+            echo "Missing staged ${ARTIFACT_PRODUCT_NAME} Windows installer for upload version ${UPLOAD_VERSION}" >&2
             echo "Release directory contents:" >&2
             find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; >&2
             exit 1
           fi
+          STAGED_INSTALLER="$EXPECTED_INSTALLER"
           echo "Staged Windows installer: $STAGED_INSTALLER"
 
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
