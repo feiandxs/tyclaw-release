@@ -1327,7 +1327,7 @@ jobs:
             local count
             zips=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-              | grep '\.zip$' | grep -v '\.blockmap' | grep -v -- '-dev-' | sort -k1,1r -k2,2r | awk '{print $4}')
+              | grep '\.zip$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}')
             count=0
             for zip in $zips; do
               count=$((count + 1))
@@ -1346,7 +1346,7 @@ jobs:
 
           EXES=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/" \
             --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-            | grep '\.exe$' | grep -v '\.blockmap' | grep -v -- '-dev-' | sort -k1,1r -k2,2r | awk '{print $4}')
+            | grep '\.exe$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}')
           COUNT=0
           for exe in $EXES; do
             COUNT=$((COUNT + 1))
