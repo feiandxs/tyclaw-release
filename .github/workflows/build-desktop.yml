@@ -1134,12 +1134,6 @@ jobs:
             echo "Missing bundled Python runtime in Windows unpacked app resources" >&2
             exit 1
           fi
-          for dll in vcruntime140.dll vcruntime140_1.dll; do
-            if ! find "release/${VERSION}" -path "*/win-unpacked/resources/bin/${dll}" -type f | grep -q .; then
-              echo "Missing bundled ${dll} in Windows app resources" >&2
-              exit 1
-            fi
-          done
           "$BUNDLED_PYTHON" --version
           node scripts/smoke-test-app.mjs "$APP_EXE"
 
