@@ -96,10 +96,9 @@ jobs:
         run: |
           REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.ref.outputs.ref }}"
+          git clone "$REPO_URL" source
           if [ -n "$REF" ]; then
-            git clone --depth 1 --branch "$REF" "$REPO_URL" source
-          else
-            git clone --depth 1 "$REPO_URL" source
+            git -C source checkout --detach "$REF"
           fi
 
       - name: Package + upload protocol schema bundle
@@ -145,10 +144,9 @@ jobs:
         run: |
           REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
+          git clone "$REPO_URL" source
           if [ -n "$REF" ]; then
-            git clone --depth 1 --branch "$REF" "$REPO_URL" source
-          else
-            git clone --depth 1 "$REPO_URL" source
+            git -C source checkout --detach "$REF"
           fi
 
       - name: Setup Rust toolchain
@@ -218,10 +216,9 @@ jobs:
         run: |
           REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
+          git clone "$REPO_URL" source
           if [ -n "$REF" ]; then
-            git clone --depth 1 --branch "$REF" "$REPO_URL" source
-          else
-            git clone --depth 1 "$REPO_URL" source
+            git -C source checkout --detach "$REF"
           fi
 
       - name: Setup Rust toolchain
@@ -291,10 +288,9 @@ jobs:
         run: |
           REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
           REF="${{ steps.vars.outputs.ref }}"
+          git clone "$REPO_URL" source
           if [ -n "$REF" ]; then
-            git clone --depth 1 --branch "$REF" "$REPO_URL" source
-          else
-            git clone --depth 1 "$REPO_URL" source
+            git -C source checkout --detach "$REF"
           fi
 
       - name: Setup Rust toolchain
