@@ -832,7 +832,14 @@ jobs:
             $TAG = "${{ github.event.client_payload.tag }}"
           }
           $repoUrl = "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git"
-          if ($TAG) {
+          if ($TAG -match '^[0-9a-fA-F]{40}$') {
+            Write-Host "Cloning source commit: $TAG"
+            git clone --depth 1 $repoUrl source
+            Push-Location source
+            git fetch --depth 1 origin $TAG
+            git checkout --detach FETCH_HEAD
+            Pop-Location
+          } elseif ($TAG) {
             Write-Host "Cloning tagged source: $TAG"
             git clone --depth 1 --branch $TAG $repoUrl source
           } else {
