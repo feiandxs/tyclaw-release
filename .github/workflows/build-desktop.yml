@@ -376,7 +376,8 @@ jobs:
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
-              | grep -- '-dev-' || true)
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.(zip|blockmap)$' || true)
             for existing in $EXISTING_DEV_FILES; do
               echo "Removing stale dev artifact: $existing"
               aws s3 rm "${MAC_TARGET}/$existing" \
@@ -739,7 +740,8 @@ jobs:
             EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
-              | grep -- '-dev-' || true)
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.(zip|blockmap)$' || true)
             for existing in $EXISTING_DEV_FILES; do
               echo "Removing stale dev artifact: $existing"
               aws s3 rm "${MAC_TARGET}/$existing" \
@@ -1172,7 +1174,8 @@ jobs:
             EXISTING_DEV_FILES=$(aws s3 ls "${WIN_TARGET}/" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
               | awk '{print $4}' \
-              | grep -- '-dev-' || true)
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.(exe|blockmap)$' || true)
             for existing in $EXISTING_DEV_FILES; do
               echo "Removing stale dev artifact: $existing"
               aws s3 rm "${WIN_TARGET}/$existing" \
@@ -1226,7 +1229,18 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     needs: [build-mac-x64, build-mac-arm64, build-win]
-    if: always() && contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) && contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) && contains(fromJSON('["success","skipped"]'), needs.build-win.result) && (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
+    if: >-
+      ${{
+        always() &&
+        (
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) ||
+          (github.event_name == 'repository_dispatch' && github.event.client_payload.tag)
+        ) &&
+        contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) &&
+        contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) &&
+        contains(fromJSON('["success","skipped"]'), needs.build-win.result) &&
+        (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
+      }}
     steps:
       - name: Clean old versions on R2
         env:
