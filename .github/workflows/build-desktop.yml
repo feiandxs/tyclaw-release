@@ -767,11 +767,12 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
 
+  # Tagged Windows releases are packaged manually on the Windows signing machine.
   build-win:
     if: >-
       ${{
-        (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'windows-x64')) ||
-        (github.event_name == 'repository_dispatch' && (github.event.client_payload.os == '' || github.event.client_payload.os == 'all' || github.event.client_payload.os == 'windows-x64'))
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag == '' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'windows-x64')) ||
+        (github.event_name == 'repository_dispatch' && github.event.client_payload.tag == '' && (github.event.client_payload.os == '' || github.event.client_payload.os == 'all' || github.event.client_payload.os == 'windows-x64'))
       }}
     runs-on: windows-latest
     steps:
