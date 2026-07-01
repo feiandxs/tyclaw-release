@@ -109,6 +109,17 @@ jobs:
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
 
+      - name: Fetch agent-browser (x64)
+        working-directory: source
+        env:
+          TAILOS_AGENT_BROWSER_TARGET_PLATFORM: darwin
+          TAILOS_AGENT_BROWSER_TARGET_ARCH: x64
+        run: |
+          node scripts/ensure-agent-browser.mjs --force
+          test -x apps/desktop/resources/bin/agent-browser
+          test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
+          apps/desktop/resources/bin/agent-browser --version
+
       - name: Restore macOS x64 runtime downloads
         id: macos_x64_runtime_cache
         uses: actions/cache/restore@v5
@@ -343,6 +354,14 @@ jobs:
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
+            echo "Missing bundled agent-browser in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/agent-browser/skill-data/core/SKILL.md" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/agent-browser/skill-data/core/SKILL.md" \) -type f | grep -q .; then
+            echo "Missing bundled agent-browser skill-data in macOS app resources" >&2
+            exit 1
+          fi
 
           APP_ARCHS=$(lipo -archs "$APP_BIN")
           echo "x64 app architectures: $APP_ARCHS"
@@ -473,6 +492,17 @@ jobs:
           test -x apps/desktop/resources/bin/tailos
           test -x apps/desktop/resources/bin/tailos-python-shim
           file apps/desktop/resources/bin/tailos*
+
+      - name: Fetch agent-browser (arm64)
+        working-directory: source
+        env:
+          TAILOS_AGENT_BROWSER_TARGET_PLATFORM: darwin
+          TAILOS_AGENT_BROWSER_TARGET_ARCH: arm64
+        run: |
+          node scripts/ensure-agent-browser.mjs --force
+          test -x apps/desktop/resources/bin/agent-browser
+          test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
+          apps/desktop/resources/bin/agent-browser --version
 
       - name: Restore macOS arm64 runtime downloads
         id: macos_arm64_runtime_cache
@@ -707,6 +737,14 @@ jobs:
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
+            echo "Missing bundled agent-browser in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/agent-browser/skill-data/core/SKILL.md" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/agent-browser/skill-data/core/SKILL.md" \) -type f | grep -q .; then
+            echo "Missing bundled agent-browser skill-data in macOS app resources" >&2
+            exit 1
+          fi
 
           APP_ARCHS=$(lipo -archs "$APP_BIN")
           echo "arm64 app architectures: $APP_ARCHS"
@@ -843,6 +881,18 @@ jobs:
           test -f apps/desktop/resources/bin/tailos-python-shim.exe
           test -f apps/desktop/resources/bin/tailos-command-runner.exe
           test -f apps/desktop/resources/bin/tailos-windows-sandbox-setup.exe
+
+      - name: Fetch agent-browser
+        working-directory: source
+        shell: bash
+        env:
+          TAILOS_AGENT_BROWSER_TARGET_PLATFORM: win32
+          TAILOS_AGENT_BROWSER_TARGET_ARCH: x64
+        run: |
+          node scripts/ensure-agent-browser.mjs --force
+          test -f apps/desktop/resources/bin/agent-browser.exe
+          test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
+          apps/desktop/resources/bin/agent-browser.exe --version
 
       - name: Inspect tailos.exe runtime dependencies
         working-directory: source
@@ -1113,6 +1163,14 @@ jobs:
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/uv.exe' -type f | grep -q .; then
             echo "Missing bundled uv.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/agent-browser.exe' -type f | grep -q .; then
+            echo "Missing bundled agent-browser.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/agent-browser/skill-data/core/SKILL.md' -type f | grep -q .; then
+            echo "Missing bundled agent-browser skill-data in Windows unpacked app resources" >&2
             exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-command-runner.exe' -type f | grep -q .; then
