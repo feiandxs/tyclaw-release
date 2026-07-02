@@ -5,8 +5,8 @@
 # 产物发布到本 public GitHub 仓库的 Release（任何人/CI 无需 token 直链下载）。
 #
 # 产物集（每平台一个归档 + .sha256 旁证）：
-#   - macOS x64 / arm64 : tailos, tailos-python-shim
-#   - Windows x64       : tailos.exe, tailos-python-shim.exe,
+#   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host
+#   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe,
 #                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe
 #
 # 结构：prepare-release 先建好 Release（串行化，避免多平台并发创建竞态），
@@ -167,12 +167,13 @@ jobs:
         working-directory: source
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release -p tailos-cli --bins --target x86_64-apple-darwin
+          cargo build --release -p tailos-cli -p tailos-browser-host --bins --target x86_64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/x86_64-apple-darwin/release/tailos "$STAGE/"
           cp target/x86_64-apple-darwin/release/tailos-python-shim "$STAGE/"
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim
+          cp target/x86_64-apple-darwin/release/tailos-browser-host "$STAGE/"
+          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -237,12 +238,13 @@ jobs:
         working-directory: source
         run: |
           rustup target add aarch64-apple-darwin
-          cargo build --release -p tailos-cli --bins --target aarch64-apple-darwin
+          cargo build --release -p tailos-cli -p tailos-browser-host --bins --target aarch64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/aarch64-apple-darwin/release/tailos "$STAGE/"
           cp target/aarch64-apple-darwin/release/tailos-python-shim "$STAGE/"
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim
+          cp target/aarch64-apple-darwin/release/tailos-browser-host "$STAGE/"
+          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -310,7 +312,7 @@ jobs:
         shell: bash
         run: |
           # 主 CLI 二进制
-          cargo build --release -p tailos-cli --bins
+          cargo build --release -p tailos-cli -p tailos-browser-host --bins
           # Windows 沙箱辅助 bin（独立 package，不在主 workspace）
           cargo build --release \
             --manifest-path vendor/codex-windows-sandbox/Cargo.toml \
@@ -320,6 +322,7 @@ jobs:
           mkdir -p "$STAGE"
           cp target/release/tailos.exe                       "$STAGE/"
           cp target/release/tailos-python-shim.exe           "$STAGE/"
+          cp target/release/tailos-browser-host.exe          "$STAGE/"
           cp target/release/tailos-command-runner.exe        "$STAGE/"
           cp target/release/tailos-windows-sandbox-setup.exe "$STAGE/"
           ls -l "$STAGE"
