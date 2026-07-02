@@ -49,7 +49,7 @@ jobs:
           else
             TAG="${{ github.event.client_payload.tag }}"
           fi
-          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git"
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git"
           if [ -n "$TAG" ]; then
             echo "Cloning tagged source: $TAG"
             git clone --depth 1 --branch "$TAG" "$REPO_URL" source
@@ -437,7 +437,7 @@ jobs:
           else
             TAG="${{ github.event.client_payload.tag }}"
           fi
-          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git"
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git"
           if [ -n "$TAG" ]; then
             echo "Cloning tagged source: $TAG"
             git clone --depth 1 --branch "$TAG" "$REPO_URL" source
@@ -821,7 +821,7 @@ jobs:
           } else {
             $TAG = "${{ github.event.client_payload.tag }}"
           }
-          $repoUrl = "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git"
+          $repoUrl = "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git"
           if ($TAG) {
             Write-Host "Cloning tagged source: $TAG"
             git clone --depth 1 --branch $TAG $repoUrl source
