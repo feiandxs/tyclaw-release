@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           git clone --depth 1 --branch "${{ steps.ref.outputs.branch }}" \
-            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/tyclaw.git" \
+            "https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git" \
             source
 
       - name: Checkout exact SHA
