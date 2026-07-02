@@ -115,6 +115,13 @@ jobs:
             exit 1
           fi
 
+          origin_url="$(git remote get-url origin)"
+          case "$origin_url" in
+            *gitlab.apexdata.com.cn*ty/tyclaw*)
+              git remote set-url origin "${origin_url/ty\/tyclaw/ty\/triomate}"
+              ;;
+          esac
+
           git fetch --prune origin
 
           if [ -n "$DEPLOY_SHA" ]; then
