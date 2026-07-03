@@ -341,6 +341,9 @@ jobs:
             echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
+          APP_PATH="${APP_BIN%/Contents/MacOS/*}"
+          codesign --verify --deep --strict --verbose=3 "$APP_PATH"
+          spctl --assess --type exec --verbose=3 "$APP_PATH"
 
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
@@ -724,6 +727,9 @@ jobs:
             echo "Unable to find ${APP_NAME} or ${LEGACY_APP_NAME} binary inside $(basename "$ZIP_FILE")" >&2
             exit 1
           fi
+          APP_PATH="${APP_BIN%/Contents/MacOS/*}"
+          codesign --verify --deep --strict --verbose=3 "$APP_PATH"
+          spctl --assess --type exec --verbose=3 "$APP_PATH"
 
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/rg" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/rg" \) -type f | grep -q .; then
             echo "Missing bundled rg in macOS app resources" >&2
