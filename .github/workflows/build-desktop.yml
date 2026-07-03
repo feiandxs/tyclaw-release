@@ -302,7 +302,7 @@ jobs:
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           else
-            pnpm exec electron-builder --mac zip --x64 --publish never
+            pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           fi
 
       - name: Verify macOS x64 release artifacts
@@ -688,7 +688,7 @@ jobs:
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           else
-            pnpm exec electron-builder --mac zip --arm64 --publish never
+            pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           fi
 
       - name: Verify macOS arm64 release artifacts
