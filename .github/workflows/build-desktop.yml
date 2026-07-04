@@ -292,6 +292,7 @@ jobs:
           rm -f "$CERT_FILE"
 
       - name: Package macOS x64 app
+        timeout-minutes: 90
         working-directory: source/apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "true"
@@ -678,6 +679,7 @@ jobs:
           rm -f "$CERT_FILE"
 
       - name: Package macOS arm64 app
+        timeout-minutes: 90
         working-directory: source/apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "true"
