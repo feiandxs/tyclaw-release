@@ -1,0 +1,46 @@
+name: Check Notarization Status
+
+on:
+  workflow_dispatch:
+
+jobs:
+  notary-status:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Query notarization history
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          HISTORY_FILE="$(mktemp)"
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json | tee "$HISTORY_FILE"
+
+          python3 - "$HISTORY_FILE" > /tmp/submission-ids.txt <<'PY'
+          import json, sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              history = json.load(handle).get("history", [])
+
+          for item in history[:10]:
+              if item.get("id"):
+                  print(item["id"])
+          PY
+
+          while IFS= read -r submission_id; do
+            [ -n "$submission_id" ] || continue
+            echo "::group::notarytool info $submission_id"
+            xcrun notarytool info "$submission_id" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --output-format json || true
+            echo "::endgroup::"
+          done < /tmp/submission-ids.txt
