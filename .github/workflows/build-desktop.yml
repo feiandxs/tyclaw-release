@@ -320,6 +320,46 @@ jobs:
             pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           fi
 
+      - name: Dump macOS notarization queue
+        if: always()
+        timeout-minutes: 3
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          HISTORY_FILE="$(mktemp)"
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json | tee "$HISTORY_FILE"
+
+          python3 - "$HISTORY_FILE" <<'PY' > /tmp/notary-in-progress-ids.txt
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              history = json.load(handle).get("history", [])
+
+          for item in history[:5]:
+              if item.get("status") == "In Progress" and item.get("id"):
+                  print(item["id"])
+          PY
+
+          while IFS= read -r submission_id; do
+            [ -n "$submission_id" ] || continue
+            echo "::group::notarytool info $submission_id"
+            xcrun notarytool info "$submission_id" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --output-format json || true
+            echo "::endgroup::"
+          done < /tmp/notary-in-progress-ids.txt
+
       - name: Verify macOS x64 release artifacts
         working-directory: source/apps/desktop
         run: |
@@ -720,6 +760,46 @@ jobs:
           else
             pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           fi
+
+      - name: Dump macOS notarization queue
+        if: always()
+        timeout-minutes: 3
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          HISTORY_FILE="$(mktemp)"
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json | tee "$HISTORY_FILE"
+
+          python3 - "$HISTORY_FILE" <<'PY' > /tmp/notary-in-progress-ids.txt
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              history = json.load(handle).get("history", [])
+
+          for item in history[:5]:
+              if item.get("status") == "In Progress" and item.get("id"):
+                  print(item["id"])
+          PY
+
+          while IFS= read -r submission_id; do
+            [ -n "$submission_id" ] || continue
+            echo "::group::notarytool info $submission_id"
+            xcrun notarytool info "$submission_id" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --output-format json || true
+            echo "::endgroup::"
+          done < /tmp/notary-in-progress-ids.txt
 
       - name: Verify macOS arm64 release artifacts
         working-directory: source/apps/desktop
