@@ -230,10 +230,6 @@ jobs:
             pnpm run build:release-assets
           fi
 
-      - name: Hoist external deps for asar
-        working-directory: source/apps/desktop
-        run: node scripts/hoist-external-deps.mjs hoist
-
       - name: Read version from package.json
         id: pkg
         working-directory: source/apps/desktop
@@ -615,10 +611,6 @@ jobs:
           else
             pnpm run build:release-assets
           fi
-
-      - name: Hoist external deps for asar
-        working-directory: source/apps/desktop
-        run: node scripts/hoist-external-deps.mjs hoist
 
       - name: Read version from package.json
         id: pkg
@@ -1090,10 +1082,6 @@ jobs:
           } else {
             pnpm run build:release-assets
           }
-
-      - name: Hoist external deps for asar
-        working-directory: source/apps/desktop
-        run: node scripts/hoist-external-deps.mjs hoist
 
       - name: Read version from package.json
         id: pkg
