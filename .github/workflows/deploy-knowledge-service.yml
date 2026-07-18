@@ -1,0 +1,286 @@
+name: Deploy Knowledge Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-character GitLab commit SHA to deploy"
+        required: true
+        type: string
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "development"
+        type: choice
+        options:
+          - development
+          - production
+
+concurrency:
+  group: deploy-knowledge-service-${{ github.event.inputs.environment || 'development' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'development' }}
+    steps:
+      - name: Validate deploy inputs
+        id: ref
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ github.event.inputs.sha }}
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sha must be a full 40-character lowercase Git commit SHA" >&2
+            exit 1
+          fi
+
+          case "$DEPLOY_ENVIRONMENT" in
+            development|production) ;;
+            *)
+              echo "Unsupported environment: $DEPLOY_ENVIRONMENT" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+          echo "environment=$DEPLOY_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Deploy SHA: $DEPLOY_SHA"
+          echo "Deploy environment: $DEPLOY_ENVIRONMENT"
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          for name in API_DEPLOY_HOST API_DEPLOY_USER API_DEPLOY_PATH API_DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Prepare SSH client
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          API_DEPLOY_KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$API_DEPLOY_SSH_KEY" > ~/.ssh/api_deploy_key
+          chmod 600 ~/.ssh/api_deploy_key
+
+          if [ -n "$API_DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$API_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${API_DEPLOY_PORT:-22}" "$API_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy Knowledge Service on remote host
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i ~/.ssh/api_deploy_key \
+            -p "${API_DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            "${API_DEPLOY_USER}@${API_DEPLOY_HOST}" \
+            "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
+            exit 1
+          fi
+
+          if ! sudo -n docker version >/dev/null 2>&1; then
+            echo "sudo -n docker is required on the remote host" >&2
+            exit 1
+          fi
+          if ! sudo -n docker-compose version >/dev/null 2>&1; then
+            echo "sudo -n docker-compose is required on the remote host" >&2
+            exit 1
+          fi
+          if ! sudo -n docker network inspect api-gateway_default >/dev/null 2>&1; then
+            echo "Required Docker network is missing: api-gateway_default" >&2
+            exit 1
+          fi
+
+          cd "$DEPLOY_PATH"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
+            git status --short
+            exit 1
+          fi
+
+          origin_url="$(git remote get-url origin)"
+          case "$origin_url" in
+            *gitlab.apexdata.com.cn*ty/tyclaw*)
+              git remote set-url origin "${origin_url/ty\/tyclaw/ty\/triomate}"
+              ;;
+          esac
+
+          git fetch --prune origin
+          git fetch --depth 1 origin "$DEPLOY_SHA"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$DEPLOY_SHA" ]; then
+            echo "Fetched commit does not match requested SHA" >&2
+            exit 1
+          fi
+
+          worktree_path="${DEPLOY_PATH%/}.knowledge-service-deploy"
+          if [ -e "$worktree_path" ]; then
+            if git worktree list --porcelain | grep -Fxq "worktree $worktree_path"; then
+              git worktree remove --force "$worktree_path"
+            else
+              echo "Refusing to replace unregistered path: $worktree_path" >&2
+              exit 1
+            fi
+          fi
+          git worktree prune
+          git worktree add --detach "$worktree_path" "$DEPLOY_SHA"
+          cd "$worktree_path"
+
+          if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ]; then
+            echo "Deploy worktree is not at requested SHA" >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy worktree is not clean: $worktree_path" >&2
+            exit 1
+          fi
+
+          compose() {
+            sudo -n docker-compose \
+              -p knowledge-service \
+              -f apps/knowledge-service/docker-compose.yml \
+              -f apps/knowledge-service/docker-compose.gateway.yml \
+              "$@"
+          }
+
+          health_check() {
+            local health_ok=false
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error http://127.0.0.1:3207/health >/dev/null; then
+                echo "Health check passed on attempt $attempt"
+                health_ok=true
+                break
+              fi
+              echo "Health check attempt $attempt/30 failed, waiting 2s..."
+              sleep 2
+            done
+            [ "$health_ok" = "true" ]
+          }
+
+          old_container="$(compose ps -q knowledge-service || true)"
+          old_image=""
+          rollback_tag=""
+          if [ -n "$old_container" ]; then
+            old_image="$(sudo -n docker inspect --format '{{.Image}}' "$old_container")"
+            rollback_tag="tailos-knowledge-service:rollback-$(date -u +%Y%m%d%H%M%S)"
+            sudo -n docker tag "$old_image" "$rollback_tag"
+            echo "Rollback image: $rollback_tag ($old_image)"
+          else
+            echo "No previous Knowledge Service container found"
+          fi
+
+          rollback_armed=false
+          rollback() {
+            local status=$?
+            trap - ERR
+            compose logs --tail=200 knowledge-service || true
+
+            if [ "$rollback_armed" = "true" ] && [ -n "$old_image" ]; then
+              echo "Deployment failed; restoring $rollback_tag"
+              sudo -n docker tag "$old_image" tailos-knowledge-service:local
+              compose up -d --no-build --force-recreate
+              if ! health_check; then
+                echo "Rollback container did not become healthy" >&2
+              fi
+            else
+              echo "Deployment failed before replacement, or no rollback image exists" >&2
+            fi
+            exit "$status"
+          }
+          trap rollback ERR
+
+          candidate_image="tailos-knowledge-service:$DEPLOY_SHA"
+          sudo -n docker build \
+            --network=host \
+            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
+            -f apps/knowledge-service/Dockerfile \
+            -t "$candidate_image" \
+            .
+          candidate_id="$(sudo -n docker image inspect --format '{{.Id}}' "$candidate_image")"
+          echo "Candidate image: $candidate_image ($candidate_id)"
+
+          sudo -n docker tag "$candidate_image" tailos-knowledge-service:local
+          rollback_armed=true
+          compose up -d --no-build --force-recreate
+          health_check
+
+          container_id="$(compose ps -q knowledge-service)"
+          running_image="$(sudo -n docker inspect --format '{{.Image}}' "$container_id")"
+          if [ "$running_image" != "$candidate_id" ]; then
+            echo "Running image $running_image does not match candidate $candidate_id" >&2
+            exit 1
+          fi
+
+          data_mount="$(sudo -n docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}' "$container_id")"
+          if [ -z "$data_mount" ]; then
+            echo "Knowledge Service container has no /data mount" >&2
+            exit 1
+          fi
+          if ! sudo -n docker inspect --format '{{json .NetworkSettings.Networks}}' "$container_id" | grep -q 'api-gateway_default'; then
+            echo "Knowledge Service is not attached to api-gateway_default" >&2
+            exit 1
+          fi
+
+          smoke_response="$(curl --fail --silent --show-error --get \
+            --data-urlencode 'q=__knowledge_deploy_smoke__' \
+            --data-urlencode 'limit=1' \
+            http://127.0.0.1:3207/search)"
+          if ! printf '%s' "$smoke_response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+            echo "Knowledge search smoke returned an unexpected response" >&2
+            exit 1
+          fi
+
+          rollback_armed=false
+          trap - ERR
+          echo "Deploy worktree SHA: $(git rev-parse HEAD)"
+          echo "Running container: $container_id"
+          echo "Running image: $running_image"
+          echo "Persistent /data mount: $data_mount"
+          compose ps
+          EOF
+
+      - name: Summarize deployment
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+          DEPLOY_ENVIRONMENT: ${{ steps.ref.outputs.environment }}
+        run: |
+          {
+            echo "## Knowledge Service deployment"
+            echo
+            echo "- Environment: \`$DEPLOY_ENVIRONMENT\`"
+            echo "- GitLab SHA: \`$DEPLOY_SHA\`"
+            echo "- Health: passed"
+            echo "- Search protocol smoke: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
