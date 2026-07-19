@@ -1,0 +1,182 @@
+name: Deploy Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "GitLab branch to deploy"
+        required: false
+        default: "main"
+      sha:
+        description: "Optional GitLab commit SHA to deploy. When set, it overrides branch HEAD."
+        required: false
+        default: ""
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - development
+
+concurrency:
+  group: deploy-relay-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Resolve deploy inputs
+        id: ref
+        shell: bash
+        run: |
+          BRANCH="${{ github.event.inputs.branch }}"
+          SHA="${{ github.event.inputs.sha }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+
+          if [ -z "$BRANCH" ]; then
+            BRANCH="main"
+          fi
+
+          if [ -z "$ENVIRONMENT" ]; then
+            ENVIRONMENT="production"
+          fi
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Resolved branch: $BRANCH"
+          echo "Resolved sha: ${SHA:-<none>}"
+          echo "Resolved environment: $ENVIRONMENT"
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+        run: |
+          for name in API_DEPLOY_HOST API_DEPLOY_USER API_DEPLOY_PATH API_DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Prepare SSH client
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          API_DEPLOY_KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$API_DEPLOY_SSH_KEY" > ~/.ssh/api_deploy_key
+          chmod 600 ~/.ssh/api_deploy_key
+
+          if [ -n "$API_DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$API_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${API_DEPLOY_PORT:-22}" "$API_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy Relay on remote host
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          DEPLOY_BRANCH: ${{ steps.ref.outputs.branch }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          ssh \
+            -i ~/.ssh/api_deploy_key \
+            -p "${API_DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            "${API_DEPLOY_USER}@${API_DEPLOY_HOST}" \
+            "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_BRANCH='${DEPLOY_BRANCH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
+            exit 1
+          fi
+
+          cd "$DEPLOY_PATH"
+
+          if ! sudo -n docker-compose version >/dev/null 2>&1; then
+            echo "sudo -n docker-compose is required on the remote host" >&2
+            exit 1
+          fi
+
+          if [ ! -f deploy/relay/.env ]; then
+            echo "Missing deploy/relay/.env on the remote host" >&2
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
+            echo "Refusing to deploy over a dirty working tree." >&2
+            git status --short
+            exit 1
+          fi
+
+          origin_url="$(git remote get-url origin)"
+          case "$origin_url" in
+            *gitlab.apexdata.com.cn*ty/tyclaw*)
+              git remote set-url origin "${origin_url/ty\/tyclaw/ty\/triomate}"
+              ;;
+          esac
+
+          git fetch --prune origin
+
+          if [ -n "$DEPLOY_SHA" ]; then
+            echo "Deploying exact SHA: $DEPLOY_SHA"
+            git fetch --depth 1 origin "$DEPLOY_SHA"
+            git checkout --detach FETCH_HEAD
+          else
+            echo "Deploying branch head: $DEPLOY_BRANCH"
+            git fetch --depth 1 origin "$DEPLOY_BRANCH"
+            git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+          fi
+
+          sudo -n docker-compose -f deploy/relay/docker-compose.yml --env-file deploy/relay/.env up -d --build
+          sudo -n docker-compose -f deploy/relay/docker-compose.yml --env-file deploy/relay/.env ps
+
+          # Relay has no /health route; the app answering HTTP on its bind port
+          # (404 on "/") proves the process is up. Read the port from .env so
+          # production and development can differ without touching this file.
+          RELAY_PORT="$(grep '^RELAY_BIND_PORT=' deploy/relay/.env | cut -d= -f2- || true)"
+          RELAY_PORT="${RELAY_PORT:-8085}"
+          echo "Health check target: http://127.0.0.1:${RELAY_PORT}/"
+
+          health_ok=false
+          for attempt in $(seq 1 30); do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 "http://127.0.0.1:${RELAY_PORT}/" || true)"
+            if [ "$status" = "404" ] || [ "$status" = "200" ]; then
+              echo "Health check passed on attempt $attempt (HTTP $status)"
+              health_ok=true
+              break
+            fi
+
+            echo "Health check attempt $attempt/30 got HTTP ${status:-000}, waiting 2s..."
+            sleep 2
+          done
+
+          if [ "$health_ok" != "true" ]; then
+            sudo -n docker-compose -f deploy/relay/docker-compose.yml --env-file deploy/relay/.env logs --tail=200 relay
+            exit 1
+          fi
+
+          container_state="$(sudo -n docker-compose -f deploy/relay/docker-compose.yml --env-file deploy/relay/.env ps --format '{{.State}}' relay 2>/dev/null || true)"
+          if [ -n "$container_state" ] && [ "$container_state" != "running" ]; then
+            echo "Relay container state is '$container_state', expected 'running'" >&2
+            exit 1
+          fi
+          EOF
