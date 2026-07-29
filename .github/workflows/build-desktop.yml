@@ -309,6 +309,8 @@ jobs:
 
       - name: Verify macOS x64 release artifacts
         working-directory: source/apps/desktop
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
@@ -326,6 +328,14 @@ jobs:
             echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
+
+          DMG_SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/tyclaw-build.keychain-db | awk -v team="(${APPLE_TEAM_ID})" 'index($0, "Developer ID Application:") && index($0, team) { identity=$2; count++ } END { if (count == 1) print identity }')
+          if [ -z "$DMG_SIGN_IDENTITY" ]; then
+            echo "Expected exactly one Developer ID Application identity for team ${APPLE_TEAM_ID}" >&2
+            exit 1
+          fi
+          codesign --force --timestamp --sign "$DMG_SIGN_IDENTITY" "$DMG_FILE"
+          codesign --verify --verbose=4 "$DMG_FILE"
 
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
@@ -762,6 +772,8 @@ jobs:
 
       - name: Verify macOS arm64 release artifacts
         working-directory: source/apps/desktop
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           VERSION="${{ steps.pkg.outputs.app_version }}"
           RELEASE_DIR="release/${VERSION}"
@@ -779,6 +791,14 @@ jobs:
             echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
+
+          DMG_SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/tyclaw-build.keychain-db | awk -v team="(${APPLE_TEAM_ID})" 'index($0, "Developer ID Application:") && index($0, team) { identity=$2; count++ } END { if (count == 1) print identity }')
+          if [ -z "$DMG_SIGN_IDENTITY" ]; then
+            echo "Expected exactly one Developer ID Application identity for team ${APPLE_TEAM_ID}" >&2
+            exit 1
+          fi
+          codesign --force --timestamp --sign "$DMG_SIGN_IDENTITY" "$DMG_FILE"
+          codesign --verify --verbose=4 "$DMG_FILE"
 
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
