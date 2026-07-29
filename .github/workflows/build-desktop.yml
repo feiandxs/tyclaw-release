@@ -327,6 +327,14 @@ jobs:
             exit 1
           fi
 
+          DMG_SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/tyclaw-build.keychain-db | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$DMG_SIGN_IDENTITY" ]; then
+            echo "Developer ID Application identity not found for DMG signing" >&2
+            exit 1
+          fi
+          codesign --force --timestamp --sign "$DMG_SIGN_IDENTITY" "$DMG_FILE"
+          codesign --verify --verbose=4 "$DMG_FILE"
+
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             METADATA_FILE="dev-mac.yml"
@@ -779,6 +787,14 @@ jobs:
             echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
+
+          DMG_SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/tyclaw-build.keychain-db | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$DMG_SIGN_IDENTITY" ]; then
+            echo "Developer ID Application identity not found for DMG signing" >&2
+            exit 1
+          fi
+          codesign --force --timestamp --sign "$DMG_SIGN_IDENTITY" "$DMG_FILE"
+          codesign --verify --verbose=4 "$DMG_FILE"
 
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
