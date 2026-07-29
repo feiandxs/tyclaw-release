@@ -29,9 +29,9 @@ env:
   RIPGREP_VERSION: "15.1.0"
   R2_BUCKET: "files"
   R2_RELEASE_PREFIX: "releases/tyclaw"
-  # Current three-platform stable artifacts are about 645MB per version.
-  # Keep 12 versions to stay below 10GB with room for package growth.
-  R2_STABLE_RELEASES_TO_KEEP: "12"
+  # Stable ZIP/blockmap and Windows artifacts are retained for OTA rollback.
+  # macOS DMG is only the website installer and is pruned to the latest per architecture.
+  R2_STABLE_RELEASES_TO_KEEP: "5"
 
 jobs:
   build-mac-x64:
@@ -298,7 +298,7 @@ jobs:
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
           else
-            pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+            pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           fi
 
       - name: Verify macOS x64 release artifacts
@@ -315,6 +315,17 @@ jobs:
             exit 1
           fi
 
+          DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            if [ -n "$DMG_FILE" ]; then
+              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
+              exit 1
+            fi
+          elif [ -z "$DMG_FILE" ]; then
+            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+            exit 1
+          fi
+
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             METADATA_FILE="dev-mac.yml"
@@ -324,8 +335,27 @@ jobs:
             exit 1
           fi
 
+          node -e '
+            const fs = require("node:fs");
+            const YAML = require("yaml");
+            const metadata = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const path = metadata?.path;
+            const pathname = typeof path === "string" && /^https?:\/\//i.test(path) ? new URL(path).pathname : path;
+            if (typeof pathname !== "string" || !pathname.endsWith(".zip")) {
+              throw new Error(`macOS OTA metadata path must reference ZIP, got: ${String(path)}`);
+            }
+          ' "$RELEASE_DIR/$METADATA_FILE"
+
           TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
+          MOUNT_DIR=""
+          cleanup_verify_artifacts() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || hdiutil detach "$MOUNT_DIR" -force -quiet 2>/dev/null || true
+              rmdir "$MOUNT_DIR" 2>/dev/null || true
+            fi
+            rm -rf "$TMP_DIR"
+          }
+          trap cleanup_verify_artifacts EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
           APP_BIN=$(
@@ -369,6 +399,35 @@ jobs:
             exit 1
           fi
 
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+            MOUNT_DIR=$(mktemp -d)
+
+            hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
+            DMG_APP_PATH="$MOUNT_DIR/${APP_NAME}.app"
+            if [ ! -d "$DMG_APP_PATH" ]; then
+              echo "DMG is missing ${APP_NAME}.app" >&2
+              ls -la "$MOUNT_DIR" >&2
+              exit 1
+            fi
+            if [ ! -L "$MOUNT_DIR/Applications" ] || [ "$(readlink "$MOUNT_DIR/Applications")" != "/Applications" ]; then
+              echo "DMG is missing the /Applications symlink" >&2
+              ls -la "$MOUNT_DIR" >&2
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=3 "$DMG_APP_PATH"
+            spctl --assess --type exec --verbose=3 "$DMG_APP_PATH"
+            DMG_APP_BIN="$DMG_APP_PATH/Contents/MacOS/${APP_NAME}"
+            DMG_APP_ARCHS=$(lipo -archs "$DMG_APP_BIN")
+            echo "x64 DMG app architectures: $DMG_APP_ARCHS"
+            if [[ "$DMG_APP_ARCHS" != *"x86_64"* ]]; then
+              echo "Expected x64 DMG binary, got: $DMG_APP_ARCHS" >&2
+              exit 1
+            fi
+            hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach "$MOUNT_DIR" -force -quiet
+            rmdir "$MOUNT_DIR" 2>/dev/null || true
+            MOUNT_DIR=""
+          fi
+
       - name: Upload macOS x64 artifacts to R2
         working-directory: source/apps/desktop
         env:
@@ -385,33 +444,25 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-          fi
-
-          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
-            EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
-              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-              | awk '{print $4}' \
-              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
-              | grep -E '\.(zip|blockmap)$' || true)
-            for existing in $EXISTING_DEV_FILES; do
-              echo "Removing stale dev artifact: $existing"
-              aws s3 rm "${MAC_TARGET}/$existing" \
-                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-            done
-          fi
-
-          for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
+          for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
+            if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ] && [[ "$f" == *.dmg ]]; then
+              echo "Skipping preview DMG upload: $(basename "$f")"
+              continue
+            fi
             cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-            cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.dmg"
+            EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.zip"
+            test -f "$STAGING_DIR/$EXPECTED_DMG" || { echo "Missing staged stable DMG: $EXPECTED_DMG" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged stable ZIP: $EXPECTED_ZIP" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged stable ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           else
-            cp "$RELEASE_DIR"/dev-mac.yml "$STAGING_DIR"/
+            EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-x64.zip"
+            test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged preview ZIP: $EXPECTED_ZIP" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged preview ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           fi
 
           for f in "$STAGING_DIR"/*; do
@@ -420,6 +471,33 @@ jobs:
             aws s3 cp "$f" "${MAC_TARGET}/$(basename "$f")" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            if [ -f "changelog.yml" ]; then
+              aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            fi
+            aws s3 cp "$RELEASE_DIR/latest-mac.yml" "${MAC_TARGET}/latest-mac.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          else
+            aws s3 cp "$RELEASE_DIR/dev-mac.yml" "${MAC_TARGET}/dev-mac.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+
+            DEV_OBJECTS=$(aws s3 ls "${MAC_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+            EXISTING_DEV_FILES=$(printf '%s\n' "$DEV_OBJECTS" \
+              | awk '{print $4}' \
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.(zip|blockmap)$' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              if [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
+                continue
+              fi
+              echo "Removing stale dev artifact after publishing the new dev metadata: $existing"
+              aws s3 rm "${MAC_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
 
   build-mac-arm64:
     if: >-
@@ -680,7 +758,7 @@ jobs:
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           else
-            pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+            pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           fi
 
       - name: Verify macOS arm64 release artifacts
@@ -697,6 +775,17 @@ jobs:
             exit 1
           fi
 
+          DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            if [ -n "$DMG_FILE" ]; then
+              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
+              exit 1
+            fi
+          elif [ -z "$DMG_FILE" ]; then
+            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+            exit 1
+          fi
+
           METADATA_FILE="latest-mac.yml"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             METADATA_FILE="dev-mac.yml"
@@ -706,8 +795,27 @@ jobs:
             exit 1
           fi
 
+          node -e '
+            const fs = require("node:fs");
+            const YAML = require("yaml");
+            const metadata = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const path = metadata?.path;
+            const pathname = typeof path === "string" && /^https?:\/\//i.test(path) ? new URL(path).pathname : path;
+            if (typeof pathname !== "string" || !pathname.endsWith(".zip")) {
+              throw new Error(`macOS OTA metadata path must reference ZIP, got: ${String(path)}`);
+            }
+          ' "$RELEASE_DIR/$METADATA_FILE"
+
           TMP_DIR=$(mktemp -d)
-          trap 'rm -rf "$TMP_DIR"' EXIT
+          MOUNT_DIR=""
+          cleanup_verify_artifacts() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || hdiutil detach "$MOUNT_DIR" -force -quiet 2>/dev/null || true
+              rmdir "$MOUNT_DIR" 2>/dev/null || true
+            fi
+            rm -rf "$TMP_DIR"
+          }
+          trap cleanup_verify_artifacts EXIT
           unzip -q "$ZIP_FILE" -d "$TMP_DIR"
 
           APP_BIN=$(
@@ -751,6 +859,35 @@ jobs:
             exit 1
           fi
 
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+            MOUNT_DIR=$(mktemp -d)
+
+            hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
+            DMG_APP_PATH="$MOUNT_DIR/${APP_NAME}.app"
+            if [ ! -d "$DMG_APP_PATH" ]; then
+              echo "DMG is missing ${APP_NAME}.app" >&2
+              ls -la "$MOUNT_DIR" >&2
+              exit 1
+            fi
+            if [ ! -L "$MOUNT_DIR/Applications" ] || [ "$(readlink "$MOUNT_DIR/Applications")" != "/Applications" ]; then
+              echo "DMG is missing the /Applications symlink" >&2
+              ls -la "$MOUNT_DIR" >&2
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=3 "$DMG_APP_PATH"
+            spctl --assess --type exec --verbose=3 "$DMG_APP_PATH"
+            DMG_APP_BIN="$DMG_APP_PATH/Contents/MacOS/${APP_NAME}"
+            DMG_APP_ARCHS=$(lipo -archs "$DMG_APP_BIN")
+            echo "arm64 DMG app architectures: $DMG_APP_ARCHS"
+            if [[ "$DMG_APP_ARCHS" != *"arm64"* ]]; then
+              echo "Expected arm64 DMG binary, got: $DMG_APP_ARCHS" >&2
+              exit 1
+            fi
+            hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach "$MOUNT_DIR" -force -quiet
+            rmdir "$MOUNT_DIR" 2>/dev/null || true
+            MOUNT_DIR=""
+          fi
+
       - name: Upload macOS arm64 artifacts to R2
         working-directory: source/apps/desktop
         env:
@@ -767,33 +904,25 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
-          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-            aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
-              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-          fi
-
-          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
-            EXISTING_DEV_FILES=$(aws s3 ls "${MAC_TARGET}/" \
-              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-              | awk '{print $4}' \
-              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
-              | grep -E '\.(zip|blockmap)$' || true)
-            for existing in $EXISTING_DEV_FILES; do
-              echo "Removing stale dev artifact: $existing"
-              aws s3 rm "${MAC_TARGET}/$existing" \
-                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-            done
-          fi
-
-          for f in "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.blockmap; do
+          for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
+            if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ] && [[ "$f" == *.dmg ]]; then
+              echo "Skipping preview DMG upload: $(basename "$f")"
+              continue
+            fi
             cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
           if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
-            cp "$RELEASE_DIR"/latest-mac.yml "$STAGING_DIR"/
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.dmg"
+            EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.zip"
+            test -f "$STAGING_DIR/$EXPECTED_DMG" || { echo "Missing staged stable DMG: $EXPECTED_DMG" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged stable ZIP: $EXPECTED_ZIP" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged stable ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           else
-            cp "$RELEASE_DIR"/dev-mac.yml "$STAGING_DIR"/
+            EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-arm64.zip"
+            test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged preview ZIP: $EXPECTED_ZIP" >&2; exit 1; }
+            test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged preview ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           fi
 
           for f in "$STAGING_DIR"/*; do
@@ -802,6 +931,33 @@ jobs:
             aws s3 cp "$f" "${MAC_TARGET}/$(basename "$f")" \
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            if [ -f "changelog.yml" ]; then
+              aws s3 cp "changelog.yml" "${ROOT_TARGET}/changelog.yml" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            fi
+            aws s3 cp "$RELEASE_DIR/latest-mac.yml" "${MAC_TARGET}/latest-mac.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          else
+            aws s3 cp "$RELEASE_DIR/dev-mac.yml" "${MAC_TARGET}/dev-mac.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+
+            DEV_OBJECTS=$(aws s3 ls "${MAC_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+            EXISTING_DEV_FILES=$(printf '%s\n' "$DEV_OBJECTS" \
+              | awk '{print $4}' \
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.(zip|blockmap)$' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              if [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
+                continue
+              fi
+              echo "Removing stale dev artifact after publishing the new dev metadata: $existing"
+              aws s3 rm "${MAC_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
 
   # Tagged Windows releases are packaged manually on the Windows signing machine.
   build-win:
@@ -1305,11 +1461,14 @@ jobs:
 
           clean_mac_dir() {
             local prefix="$1"
+            local objects
             local zips
+            local dmgs
             local count
-            zips=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" \
-              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-              | grep '\.zip$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}')
+            objects=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+            zips=$(printf '%s\n' "$objects" \
+              | grep '\.zip$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}' || true)
             count=0
             for zip in $zips; do
               count=$((count + 1))
@@ -1321,14 +1480,29 @@ jobs:
                   --endpoint-url "${{ secrets.R2_ENDPOINT }}" 2>/dev/null || true
               fi
             done
+
+            dmgs=$(printf '%s\n' "$objects" \
+              | grep '\.dmg$' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}' || true)
+            count=0
+            for dmg in $dmgs; do
+              count=$((count + 1))
+              if [ $count -gt 1 ]; then
+                echo "Deleting old macOS DMG: ${prefix}/$dmg"
+                aws s3 rm "s3://${R2_BUCKET}/${prefix}/$dmg" \
+                  --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+                aws s3 rm "s3://${R2_BUCKET}/${prefix}/${dmg}.blockmap" \
+                  --endpoint-url "${{ secrets.R2_ENDPOINT }}" 2>/dev/null || true
+              fi
+            done
           }
 
           clean_mac_dir "${R2_RELEASE_PREFIX}/macos/x64"
           clean_mac_dir "${R2_RELEASE_PREFIX}/macos/arm64"
 
-          EXES=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/" \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
-            | grep '\.exe$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}')
+          WINDOWS_OBJECTS=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+          EXES=$(printf '%s\n' "$WINDOWS_OBJECTS" \
+            | grep '\.exe$' | grep -v '\.blockmap' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}' || true)
           COUNT=0
           for exe in $EXES; do
             COUNT=$((COUNT + 1))
