@@ -445,6 +445,17 @@ jobs:
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
 
+          # One-off #1556 backfill: publish only the missing stable DMG. Do not overwrite the
+          # existing same-version ZIP, blockmap, or latest-mac.yml consumed by OTA clients.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.dmg"
+            test -f "$RELEASE_DIR/$EXPECTED_DMG" || { echo "Missing stable DMG backfill: $EXPECTED_DMG" >&2; exit 1; }
+            aws s3 cp "$RELEASE_DIR/$EXPECTED_DMG" "${MAC_TARGET}/$EXPECTED_DMG" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            echo "Backfilled stable DMG without mutating OTA metadata: $EXPECTED_DMG"
+            exit 0
+          fi
+
           for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
             cp "$f" "$STAGING_DIR/$(basename "$f")"
@@ -897,6 +908,17 @@ jobs:
           MAC_TARGET="${ROOT_TARGET}/macos/arm64"
 
           brew install awscli 2>/dev/null || pip3 install awscli --quiet --break-system-packages
+
+          # One-off #1556 backfill: publish only the missing stable DMG. Do not overwrite the
+          # existing same-version ZIP, blockmap, or latest-mac.yml consumed by OTA clients.
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-Mac-${UPLOAD_VERSION}-Installer.dmg"
+            test -f "$RELEASE_DIR/$EXPECTED_DMG" || { echo "Missing stable DMG backfill: $EXPECTED_DMG" >&2; exit 1; }
+            aws s3 cp "$RELEASE_DIR/$EXPECTED_DMG" "${MAC_TARGET}/$EXPECTED_DMG" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            echo "Backfilled stable DMG without mutating OTA metadata: $EXPECTED_DMG"
+            exit 0
+          fi
 
           for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
