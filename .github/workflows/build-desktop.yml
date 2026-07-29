@@ -296,7 +296,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           else
             pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           fi
@@ -316,13 +316,8 @@ jobs:
           fi
 
           DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if [ -n "$DMG_FILE" ]; then
-              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
-              exit 1
-            fi
-          elif [ -z "$DMG_FILE" ]; then
-            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+          if [ -z "$DMG_FILE" ]; then
+            echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -399,7 +394,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+          if [ -n "$DMG_FILE" ]; then
             MOUNT_DIR=$(mktemp -d)
 
             hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
@@ -446,10 +441,6 @@ jobs:
 
           for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
-            if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ] && [[ "$f" == *.dmg ]]; then
-              echo "Skipping preview DMG upload: $(basename "$f")"
-              continue
-            fi
             cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
@@ -460,7 +451,9 @@ jobs:
             test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged stable ZIP: $EXPECTED_ZIP" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged stable ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           else
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-x64.dmg"
             EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-x64.zip"
+            test -f "$STAGING_DIR/$EXPECTED_DMG" || { echo "Missing staged preview DMG: $EXPECTED_DMG" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged preview ZIP: $EXPECTED_ZIP" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged preview ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           fi
@@ -488,9 +481,9 @@ jobs:
             EXISTING_DEV_FILES=$(printf '%s\n' "$DEV_OBJECTS" \
               | awk '{print $4}' \
               | grep -Ei -- '(^|-)dev([.-]|-|$)' \
-              | grep -E '\.(zip|blockmap)$' || true)
+              | grep -E '\.(dmg|zip|blockmap)$' || true)
             for existing in $EXISTING_DEV_FILES; do
-              if [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
+              if [ "$existing" = "$EXPECTED_DMG" ] || [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
                 continue
               fi
               echo "Removing stale dev artifact after publishing the new dev metadata: $existing"
@@ -756,7 +749,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           else
             pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           fi
@@ -776,13 +769,8 @@ jobs:
           fi
 
           DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if [ -n "$DMG_FILE" ]; then
-              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
-              exit 1
-            fi
-          elif [ -z "$DMG_FILE" ]; then
-            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+          if [ -z "$DMG_FILE" ]; then
+            echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -859,7 +847,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+          if [ -n "$DMG_FILE" ]; then
             MOUNT_DIR=$(mktemp -d)
 
             hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
@@ -906,10 +894,6 @@ jobs:
 
           for f in "$RELEASE_DIR"/*.dmg "$RELEASE_DIR"/*.zip "$RELEASE_DIR"/*.zip.blockmap; do
             [ -f "$f" ] || continue
-            if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ] && [[ "$f" == *.dmg ]]; then
-              echo "Skipping preview DMG upload: $(basename "$f")"
-              continue
-            fi
             cp "$f" "$STAGING_DIR/$(basename "$f")"
           done
 
@@ -920,7 +904,9 @@ jobs:
             test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged stable ZIP: $EXPECTED_ZIP" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged stable ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           else
+            EXPECTED_DMG="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-arm64.dmg"
             EXPECTED_ZIP="${{ steps.upload.outputs.desktop_artifact_product_name }}-${UPLOAD_VERSION}-mac-arm64.zip"
+            test -f "$STAGING_DIR/$EXPECTED_DMG" || { echo "Missing staged preview DMG: $EXPECTED_DMG" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP" || { echo "Missing staged preview ZIP: $EXPECTED_ZIP" >&2; exit 1; }
             test -f "$STAGING_DIR/$EXPECTED_ZIP.blockmap" || { echo "Missing staged preview ZIP blockmap: $EXPECTED_ZIP.blockmap" >&2; exit 1; }
           fi
@@ -948,9 +934,9 @@ jobs:
             EXISTING_DEV_FILES=$(printf '%s\n' "$DEV_OBJECTS" \
               | awk '{print $4}' \
               | grep -Ei -- '(^|-)dev([.-]|-|$)' \
-              | grep -E '\.(zip|blockmap)$' || true)
+              | grep -E '\.(dmg|zip|blockmap)$' || true)
             for existing in $EXISTING_DEV_FILES; do
-              if [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
+              if [ "$existing" = "$EXPECTED_DMG" ] || [ "$existing" = "$EXPECTED_ZIP" ] || [ "$existing" = "$EXPECTED_ZIP.blockmap" ]; then
                 continue
               fi
               echo "Removing stale dev artifact after publishing the new dev metadata: $existing"
