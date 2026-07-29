@@ -367,7 +367,11 @@ jobs:
               throw new Error(`macOS OTA metadata must contain exactly one ZIP file, got: ${zipFiles.length}`);
             }
             metadata.files = zipFiles;
-            fs.writeFileSync(metadataPath, YAML.stringify(metadata), "utf8");
+            fs.writeFileSync(
+              metadataPath,
+              YAML.stringify(metadata, { defaultKeyType: "PLAIN", defaultStringType: "QUOTE_DOUBLE" }),
+              "utf8",
+            );
           ' "$RELEASE_DIR/$METADATA_FILE"
 
           TMP_DIR=$(mktemp -d)
@@ -843,7 +847,11 @@ jobs:
               throw new Error(`macOS OTA metadata must contain exactly one ZIP file, got: ${zipFiles.length}`);
             }
             metadata.files = zipFiles;
-            fs.writeFileSync(metadataPath, YAML.stringify(metadata), "utf8");
+            fs.writeFileSync(
+              metadataPath,
+              YAML.stringify(metadata, { defaultKeyType: "PLAIN", defaultStringType: "QUOTE_DOUBLE" }),
+              "utf8",
+            );
           ' "$RELEASE_DIR/$METADATA_FILE"
 
           TMP_DIR=$(mktemp -d)
