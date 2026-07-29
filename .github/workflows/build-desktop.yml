@@ -349,12 +349,29 @@ jobs:
           node -e '
             const fs = require("node:fs");
             const YAML = require("yaml");
-            const metadata = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const metadataPath = process.argv[1];
+            const metadata = YAML.parse(fs.readFileSync(metadataPath, "utf8"));
             const path = metadata?.path;
             const pathname = typeof path === "string" && /^https?:\/\//i.test(path) ? new URL(path).pathname : path;
             if (typeof pathname !== "string" || !pathname.endsWith(".zip")) {
               throw new Error(`macOS OTA metadata path must reference ZIP, got: ${String(path)}`);
             }
+            const zipFiles = Array.isArray(metadata?.files)
+              ? metadata.files.filter((file) => {
+                  const url = file?.url;
+                  const filePathname = typeof url === "string" && /^https?:\/\//i.test(url) ? new URL(url).pathname : url;
+                  return typeof filePathname === "string" && filePathname.endsWith(".zip");
+                })
+              : [];
+            if (zipFiles.length !== 1) {
+              throw new Error(`macOS OTA metadata must contain exactly one ZIP file, got: ${zipFiles.length}`);
+            }
+            metadata.files = zipFiles;
+            fs.writeFileSync(
+              metadataPath,
+              YAML.stringify(metadata, { defaultKeyType: "PLAIN", defaultStringType: "QUOTE_DOUBLE" }),
+              "utf8",
+            );
           ' "$RELEASE_DIR/$METADATA_FILE"
 
           TMP_DIR=$(mktemp -d)
@@ -812,12 +829,29 @@ jobs:
           node -e '
             const fs = require("node:fs");
             const YAML = require("yaml");
-            const metadata = YAML.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const metadataPath = process.argv[1];
+            const metadata = YAML.parse(fs.readFileSync(metadataPath, "utf8"));
             const path = metadata?.path;
             const pathname = typeof path === "string" && /^https?:\/\//i.test(path) ? new URL(path).pathname : path;
             if (typeof pathname !== "string" || !pathname.endsWith(".zip")) {
               throw new Error(`macOS OTA metadata path must reference ZIP, got: ${String(path)}`);
             }
+            const zipFiles = Array.isArray(metadata?.files)
+              ? metadata.files.filter((file) => {
+                  const url = file?.url;
+                  const filePathname = typeof url === "string" && /^https?:\/\//i.test(url) ? new URL(url).pathname : url;
+                  return typeof filePathname === "string" && filePathname.endsWith(".zip");
+                })
+              : [];
+            if (zipFiles.length !== 1) {
+              throw new Error(`macOS OTA metadata must contain exactly one ZIP file, got: ${zipFiles.length}`);
+            }
+            metadata.files = zipFiles;
+            fs.writeFileSync(
+              metadataPath,
+              YAML.stringify(metadata, { defaultKeyType: "PLAIN", defaultStringType: "QUOTE_DOUBLE" }),
+              "utf8",
+            );
           ' "$RELEASE_DIR/$METADATA_FILE"
 
           TMP_DIR=$(mktemp -d)
