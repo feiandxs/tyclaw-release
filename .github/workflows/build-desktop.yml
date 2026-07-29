@@ -296,7 +296,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --x64 --publish never
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           else
             pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           fi
@@ -316,13 +316,8 @@ jobs:
           fi
 
           DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if [ -n "$DMG_FILE" ]; then
-              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
-              exit 1
-            fi
-          elif [ -z "$DMG_FILE" ]; then
-            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+          if [ -z "$DMG_FILE" ]; then
+            echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -399,7 +394,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+          if [ -n "$DMG_FILE" ]; then
             MOUNT_DIR=$(mktemp -d)
 
             hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
@@ -427,6 +422,15 @@ jobs:
             rmdir "$MOUNT_DIR" 2>/dev/null || true
             MOUNT_DIR=""
           fi
+
+      - name: Upload macOS x64 dev DMG validation artifact
+        if: steps.release_channel.outputs.desktop_channel == 'preview'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64-dev-dmg-${{ github.run_number }}
+          path: source/apps/desktop/release/*/*.dmg
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Upload macOS x64 artifacts to R2
         working-directory: source/apps/desktop
@@ -756,7 +760,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           else
             pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           fi
@@ -776,13 +780,8 @@ jobs:
           fi
 
           DMG_FILE=$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if [ -n "$DMG_FILE" ]; then
-              echo "Preview macOS builds must not produce a DMG: $DMG_FILE" >&2
-              exit 1
-            fi
-          elif [ -z "$DMG_FILE" ]; then
-            echo "Expected a stable macOS DMG artifact in $RELEASE_DIR" >&2
+          if [ -z "$DMG_FILE" ]; then
+            echo "Expected a macOS DMG validation artifact in $RELEASE_DIR" >&2
             exit 1
           fi
 
@@ -859,7 +858,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" != "preview" ]; then
+          if [ -n "$DMG_FILE" ]; then
             MOUNT_DIR=$(mktemp -d)
 
             hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MOUNT_DIR" -quiet
@@ -887,6 +886,15 @@ jobs:
             rmdir "$MOUNT_DIR" 2>/dev/null || true
             MOUNT_DIR=""
           fi
+
+      - name: Upload macOS arm64 dev DMG validation artifact
+        if: steps.release_channel.outputs.desktop_channel == 'preview'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dev-dmg-${{ github.run_number }}
+          path: source/apps/desktop/release/*/*.dmg
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Upload macOS arm64 artifacts to R2
         working-directory: source/apps/desktop
