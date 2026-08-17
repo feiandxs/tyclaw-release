@@ -29,7 +29,7 @@ concurrency:
 env:
   PNPM_VERSION: "11.1.1"
   NODE_VERSION: "22"
-  PYTHON_STANDALONE_VERSION: "3.12.14"
+  PYTHON_VERSION_SERIES: "3.12"
   BUN_VERSION: "1.3.13"
   UV_VERSION: "0.11.33"
   RIPGREP_VERSION: "15.1.0"
@@ -1134,18 +1134,71 @@ jobs:
           Write-Host "Using dumpbin: $dumpbin"
           & $dumpbin /DEPENDENTS "apps\desktop\resources\bin\tailos.exe"
 
+      - name: Resolve Windows Python standalone asset
+        id: windows_python_asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_VERSION_SERIES: ${{ env.PYTHON_VERSION_SERIES }}
+          PYTHON_TARGET: x86_64-pc-windows-msvc
+        run: |
+          $assets = gh release view --repo astral-sh/python-build-standalone --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to query python-build-standalone release assets."
+          }
+
+          $pattern = "^cpython-$([regex]::Escape($env:PYTHON_VERSION_SERIES))\.(?<patch>\d+)\+(?<build>[^-]+)-$([regex]::Escape($env:PYTHON_TARGET))-install_only\.tar\.gz$"
+          $candidates = @(
+            $assets.assets |
+              ForEach-Object {
+                $assetName = [string]$_.name
+                $match = [regex]::Match($assetName, $pattern)
+                if ($match.Success) {
+                  [pscustomobject]@{
+                    asset = $_
+                    name = $assetName
+                    version = [version]"$($env:PYTHON_VERSION_SERIES).$($match.Groups['patch'].Value)"
+                    build = $match.Groups['build'].Value
+                  }
+                }
+              }
+          )
+
+          if (-not $candidates) {
+            $available = @(
+              $assets.assets |
+                Where-Object { [string]$_.name -like "cpython-$($env:PYTHON_VERSION_SERIES).*-$($env:PYTHON_TARGET)-install_only.tar.gz" } |
+                ForEach-Object { $_.name }
+            )
+            $availableText = if ($available.Count -gt 0) { $available -join ", " } else { "<none>" }
+            throw "Unable to find python-build-standalone $($env:PYTHON_VERSION_SERIES) install_only asset for $($env:PYTHON_TARGET). Available candidates: $availableText"
+          }
+
+          $candidate = $candidates |
+            Sort-Object -Property @{ Expression = { $_.version }; Descending = $true }, @{ Expression = { $_.build }; Descending = $true } |
+            Select-Object -First 1
+          $assetUrl = [string]$candidate.asset.url
+          if ([string]::IsNullOrWhiteSpace($assetUrl)) {
+            throw "Resolved Python asset has no download URL: $($candidate.name)"
+          }
+
+          Write-Host "Using Python standalone asset: $($candidate.name)"
+          "asset_name=$($candidate.name)" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+          "asset_url=$assetUrl" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
       - name: Restore Windows x64 runtime downloads
         id: windows_x64_runtime_cache
         uses: actions/cache/restore@v5
         with:
           path: source/.runtime-cache/windows-x64
-          key: ${{ runner.os }}-runtime-windows-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ env.PYTHON_STANDALONE_VERSION }}
+          key: ${{ runner.os }}-runtime-windows-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ steps.windows_python_asset.outputs.asset_name }}
 
       - name: Prepare Windows x64 runtime binaries
         working-directory: source/apps/desktop
         shell: bash
         env:
-          PYTHON_SERIES: ${{ env.PYTHON_STANDALONE_VERSION }}
+          PYTHON_ASSET_NAME: ${{ steps.windows_python_asset.outputs.asset_name }}
+          PYTHON_ASSET_URL: ${{ steps.windows_python_asset.outputs.asset_url }}
           PYTHON_TARGET: x86_64-pc-windows-msvc
           PYTHON_PLATFORM: windows-x64
           PYTHON_ENTRY: python.exe
@@ -1219,13 +1272,13 @@ jobs:
           cp "$RG_DIR/rg.exe" resources/bin/rg.exe
           echo "ripgrep downloaded: $(ls -lh resources/bin/rg.exe)"
 
-          ASSET_URL=$(gh release view --repo astral-sh/python-build-standalone --json assets -q ".assets[] | select(.name | startswith(\"cpython-$PYTHON_SERIES+\")) | select(.name | endswith(\"-$PYTHON_TARGET-install_only.tar.gz\")) | .url" | head -n 1)
-          if [ -z "$ASSET_URL" ]; then
-            echo "Unable to find python-build-standalone asset for $PYTHON_SERIES / $PYTHON_TARGET" >&2
+          if [ -z "${PYTHON_ASSET_NAME:-}" ] || [ -z "${PYTHON_ASSET_URL:-}" ]; then
+            echo "Python standalone asset resolution did not produce a name and URL" >&2
             exit 1
           fi
-          PYTHON_ARCHIVE="python-${PYTHON_SERIES}-${PYTHON_TARGET}-install_only.tar.gz"
-          download_cached "$ASSET_URL" "$CACHE_DIR/$PYTHON_ARCHIVE"
+          PYTHON_ARCHIVE="$PYTHON_ASSET_NAME"
+          echo "Using Python standalone asset: $PYTHON_ARCHIVE"
+          download_cached "$PYTHON_ASSET_URL" "$CACHE_DIR/$PYTHON_ARCHIVE"
           tar -xzf "$CACHE_DIR/$PYTHON_ARCHIVE" --strip-components=1 -C resources/runtime/python
           PYTHON_VERSION=$(resources/runtime/python/python.exe --version 2>&1 | awk '{print $2}')
           python - "$PYTHON_VERSION" "$PYTHON_PLATFORM" "$PYTHON_ENTRY" <<'PY'
