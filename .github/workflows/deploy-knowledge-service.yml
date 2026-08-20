@@ -130,16 +130,27 @@ jobs:
             exit 1
           fi
 
-          knowledge_env_file="$DEPLOY_PATH/apps/knowledge-service/.env"
-          if [ ! -f "$knowledge_env_file" ]; then
-            echo "Knowledge Service env file is missing: $knowledge_env_file" >&2
+          knowledge_env_file=""
+          for candidate in \
+            /data/home/ty-ai/services/knowledge-service/.env \
+            "$DEPLOY_PATH/deploy/api-gateway/.env" \
+            "$DEPLOY_PATH/apps/knowledge-service/.env"; do
+            if [ -f "$candidate" ] && grep -q '^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=.' "$candidate"; then
+              knowledge_env_file="$candidate"
+              break
+            fi
+          done
+          if [ -z "$knowledge_env_file" ]; then
+            echo "KNOWLEDGE_SERVICE_INTERNAL_TOKEN is not set in any known host env file" >&2
             exit 1
           fi
-          knowledge_token="$(sed -n 's/^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=//p' "$knowledge_env_file" | tail -n 1)"
+          knowledge_token="$(sed -n 's/^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=//p' "$knowledge_env_file" | tail -n 1 | tr -d '\r')"
           if [ -z "$knowledge_token" ]; then
             echo "KNOWLEDGE_SERVICE_INTERNAL_TOKEN is missing in $knowledge_env_file" >&2
             exit 1
           fi
+          echo "Using Knowledge Service env file: $knowledge_env_file"
+          export KNOWLEDGE_SERVICE_INTERNAL_TOKEN="$knowledge_token"
 
           origin_url="$(git remote get-url origin)"
           case "$origin_url" in
@@ -264,6 +275,13 @@ jobs:
             exit 1
           fi
 
+          unauth_status="$(curl --silent --output /tmp/ks-unauth-smoke.json --write-out '%{http_code}' \
+            http://127.0.0.1:3207/documents || true)"
+          if [ "$unauth_status" != "401" ]; then
+            echo "Unauthenticated documents should return 401, got $unauth_status" >&2
+            exit 1
+          fi
+
           smoke_response="$(curl --fail --silent --show-error --get \
             -H "Authorization: Bearer $knowledge_token" \
             -H 'X-Knowledge-Tenant-Id: __knowledge_deploy_smoke__' \
@@ -297,5 +315,6 @@ jobs:
             echo "- Environment: \`$DEPLOY_ENVIRONMENT\`"
             echo "- GitLab SHA: \`$DEPLOY_SHA\`"
             echo "- Health: passed"
-            echo "- Search protocol smoke: passed"
+            echo "- Unauthenticated documents: 401"
+            echo "- Authenticated search smoke: passed"
           } >> "$GITHUB_STEP_SUMMARY"
