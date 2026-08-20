@@ -130,6 +130,17 @@ jobs:
             exit 1
           fi
 
+          knowledge_env_file="$DEPLOY_PATH/apps/knowledge-service/.env"
+          if [ ! -f "$knowledge_env_file" ]; then
+            echo "Knowledge Service env file is missing: $knowledge_env_file" >&2
+            exit 1
+          fi
+          knowledge_token="$(sed -n 's/^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=//p' "$knowledge_env_file" | tail -n 1)"
+          if [ -z "$knowledge_token" ]; then
+            echo "KNOWLEDGE_SERVICE_INTERNAL_TOKEN is missing in $knowledge_env_file" >&2
+            exit 1
+          fi
+
           origin_url="$(git remote get-url origin)"
           case "$origin_url" in
             *gitlab.apexdata.com.cn*ty/tyclaw*)
@@ -168,6 +179,7 @@ jobs:
 
           compose() {
             sudo -n docker-compose \
+              --env-file "$knowledge_env_file" \
               -p knowledge-service \
               -f apps/knowledge-service/docker-compose.yml \
               -f apps/knowledge-service/docker-compose.gateway.yml \
@@ -253,7 +265,10 @@ jobs:
           fi
 
           smoke_response="$(curl --fail --silent --show-error --get \
+            -H "Authorization: Bearer $knowledge_token" \
+            -H 'X-Knowledge-Tenant-Id: __knowledge_deploy_smoke__' \
             --data-urlencode 'q=__knowledge_deploy_smoke__' \
+            --data-urlencode 'collection=__knowledge_deploy_smoke__' \
             --data-urlencode 'limit=1' \
             http://127.0.0.1:3207/search)"
           if ! printf '%s' "$smoke_response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
