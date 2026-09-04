@@ -500,10 +500,16 @@ jobs:
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
-          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) -type f | grep -q .; then
+          PYTHON_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) \
+              \( -type f -o -type l \) | head -n 1
+          )
+          if [ -z "$PYTHON_BIN" ] || [ ! -e "$PYTHON_BIN" ]; then
             echo "Missing bundled Python runtime in macOS app resources" >&2
             exit 1
           fi
+          "$PYTHON_BIN" --version
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
             echo "Missing bundled agent-browser in macOS app resources" >&2
             exit 1
@@ -1073,10 +1079,16 @@ jobs:
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
-          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) -type f | grep -q .; then
+          PYTHON_BIN=$(
+            find "$TMP_DIR" \
+              \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) \
+              \( -type f -o -type l \) | head -n 1
+          )
+          if [ -z "$PYTHON_BIN" ] || [ ! -e "$PYTHON_BIN" ]; then
             echo "Missing bundled Python runtime in macOS app resources" >&2
             exit 1
           fi
+          "$PYTHON_BIN" --version
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
             echo "Missing bundled agent-browser in macOS app resources" >&2
             exit 1
