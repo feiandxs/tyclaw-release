@@ -126,20 +126,75 @@ jobs:
           test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
           apps/desktop/resources/bin/agent-browser --version
 
+      - name: Resolve macOS x64 Python standalone asset
+        id: macos_x64_python_asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_VERSION_SERIES: ${{ env.PYTHON_VERSION_SERIES }}
+          PYTHON_TARGET: x86_64-apple-darwin
+        run: |
+          set -euo pipefail
+          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
+          python3 -c '
+          import json, os, re, sys
+          series = os.environ["PYTHON_VERSION_SERIES"]
+          target = os.environ["PYTHON_TARGET"]
+          pattern = re.compile(
+              rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
+          )
+          payload = json.loads(sys.argv[1])
+          assets = payload.get("assets") or []
+          candidates = []
+          for asset in assets:
+              name = str(asset.get("name") or "")
+              match = pattern.match(name)
+              if not match:
+                  continue
+              version = tuple(int(part) for part in f"{series}.{match.group("patch")}".split("."))
+              candidates.append((version, match.group("build"), name, str(asset.get("url") or "")))
+          if not candidates:
+              available = [
+                  str(asset.get("name") or "")
+                  for asset in assets
+                  if f"-{target}-install_only.tar.gz" in str(asset.get("name") or "")
+              ]
+              available_text = ", ".join(available) if available else "<none>"
+              raise SystemExit(
+                  f"Unable to find python-build-standalone {series} install_only asset for {target}. Available candidates: {available_text}"
+              )
+          candidates.sort(reverse=True)
+          _, _, name, url = candidates[0]
+          if not url:
+              raise SystemExit(f"Resolved Python asset has no download URL: {name}")
+          print(f"Using Python standalone asset: {name}", file=sys.stderr)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"asset_name={name}\n")
+              fh.write(f"asset_url={url}\n")
+          ' "$assets_json"
+
       - name: Restore macOS x64 runtime downloads
         id: macos_x64_runtime_cache
         uses: actions/cache/restore@v5
         with:
           path: source/.runtime-cache/macos-x64
           # Keep this prefix aligned with prune-actions-cache.yml family rules.
-          key: ${{ runner.os }}-runtime-macos-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}
+          key: ${{ runner.os }}-runtime-macos-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ steps.macos_x64_python_asset.outputs.asset_name }}
 
       - name: Prepare macOS x64 runtime binaries
         working-directory: source/apps/desktop
+        env:
+          PYTHON_ASSET_NAME: ${{ steps.macos_x64_python_asset.outputs.asset_name }}
+          PYTHON_ASSET_URL: ${{ steps.macos_x64_python_asset.outputs.asset_url }}
+          PYTHON_TARGET: x86_64-apple-darwin
+          PYTHON_PLATFORM: macos-x64
+          PYTHON_ENTRY: bin/python
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           mkdir -p resources/bin
+          rm -rf resources/runtime/python
+          mkdir -p resources/runtime/python
           CACHE_DIR="../../.runtime-cache/macos-x64"
           mkdir -p "$CACHE_DIR"
 
@@ -201,7 +256,41 @@ jobs:
           RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-x86_64-apple-darwin"
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
+
           echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+
+          if [ -z "${PYTHON_ASSET_NAME:-}" ] || [ -z "${PYTHON_ASSET_URL:-}" ]; then
+            echo "Python standalone asset resolution did not produce a name and URL" >&2
+            exit 1
+          fi
+          PYTHON_ARCHIVE="$PYTHON_ASSET_NAME"
+          echo "Using Python standalone asset: $PYTHON_ARCHIVE"
+          download_cached "$PYTHON_ASSET_URL" "$CACHE_DIR/$PYTHON_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$PYTHON_ARCHIVE" --strip-components=1 -C resources/runtime/python
+          chmod +x resources/runtime/python/bin/python
+          PYTHON_VERSION=$(resources/runtime/python/bin/python --version 2>&1 | awk '{print $2}')
+          python3 - "$PYTHON_VERSION" "$PYTHON_PLATFORM" "$PYTHON_ENTRY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version, platform, entry = sys.argv[1:4]
+          Path("resources/runtime/python/runtime.json").write_text(
+              json.dumps(
+                  {
+                      "name": "python",
+                      "implementation": "cpython",
+                      "version": version,
+                      "platform": platform,
+                      "entry": entry,
+                      "managed_by": "tyclaw-release",
+                      "layout_version": 1,
+                  },
+                  indent=2,
+              ) + "\n"
+          )
+          PY
+          resources/runtime/python/bin/python --version
 
       - name: Save macOS x64 runtime downloads
         if: steps.macos_x64_runtime_cache.outputs.cache-hit != 'true'
@@ -411,6 +500,10 @@ jobs:
             echo "Missing bundled uv in macOS app resources" >&2
             exit 1
           fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) -type f | grep -q .; then
+            echo "Missing bundled Python runtime in macOS app resources" >&2
+            exit 1
+          fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
             echo "Missing bundled agent-browser in macOS app resources" >&2
             exit 1
@@ -607,19 +700,74 @@ jobs:
           test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
           apps/desktop/resources/bin/agent-browser --version
 
+      - name: Resolve macOS arm64 Python standalone asset
+        id: macos_arm64_python_asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_VERSION_SERIES: ${{ env.PYTHON_VERSION_SERIES }}
+          PYTHON_TARGET: aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
+          python3 -c '
+          import json, os, re, sys
+          series = os.environ["PYTHON_VERSION_SERIES"]
+          target = os.environ["PYTHON_TARGET"]
+          pattern = re.compile(
+              rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
+          )
+          payload = json.loads(sys.argv[1])
+          assets = payload.get("assets") or []
+          candidates = []
+          for asset in assets:
+              name = str(asset.get("name") or "")
+              match = pattern.match(name)
+              if not match:
+                  continue
+              version = tuple(int(part) for part in f"{series}.{match.group("patch")}".split("."))
+              candidates.append((version, match.group("build"), name, str(asset.get("url") or "")))
+          if not candidates:
+              available = [
+                  str(asset.get("name") or "")
+                  for asset in assets
+                  if f"-{target}-install_only.tar.gz" in str(asset.get("name") or "")
+              ]
+              available_text = ", ".join(available) if available else "<none>"
+              raise SystemExit(
+                  f"Unable to find python-build-standalone {series} install_only asset for {target}. Available candidates: {available_text}"
+              )
+          candidates.sort(reverse=True)
+          _, _, name, url = candidates[0]
+          if not url:
+              raise SystemExit(f"Resolved Python asset has no download URL: {name}")
+          print(f"Using Python standalone asset: {name}", file=sys.stderr)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"asset_name={name}\n")
+              fh.write(f"asset_url={url}\n")
+          ' "$assets_json"
+
       - name: Restore macOS arm64 runtime downloads
         id: macos_arm64_runtime_cache
         uses: actions/cache/restore@v5
         with:
           path: source/.runtime-cache/macos-arm64
-          key: ${{ runner.os }}-runtime-macos-arm64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}
+          key: ${{ runner.os }}-runtime-macos-arm64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ steps.macos_arm64_python_asset.outputs.asset_name }}
 
       - name: Prepare macOS arm64 runtime binaries
         working-directory: source/apps/desktop
+        env:
+          PYTHON_ASSET_NAME: ${{ steps.macos_arm64_python_asset.outputs.asset_name }}
+          PYTHON_ASSET_URL: ${{ steps.macos_arm64_python_asset.outputs.asset_url }}
+          PYTHON_TARGET: aarch64-apple-darwin
+          PYTHON_PLATFORM: macos-arm64
+          PYTHON_ENTRY: bin/python
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           mkdir -p resources/bin
+          rm -rf resources/runtime/python
+          mkdir -p resources/runtime/python
           CACHE_DIR="../../.runtime-cache/macos-arm64"
           mkdir -p "$CACHE_DIR"
 
@@ -681,7 +829,41 @@ jobs:
           RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-aarch64-apple-darwin"
           cp "$RG_DIR/rg" resources/bin/rg
           chmod +x resources/bin/rg
+
           echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+
+          if [ -z "${PYTHON_ASSET_NAME:-}" ] || [ -z "${PYTHON_ASSET_URL:-}" ]; then
+            echo "Python standalone asset resolution did not produce a name and URL" >&2
+            exit 1
+          fi
+          PYTHON_ARCHIVE="$PYTHON_ASSET_NAME"
+          echo "Using Python standalone asset: $PYTHON_ARCHIVE"
+          download_cached "$PYTHON_ASSET_URL" "$CACHE_DIR/$PYTHON_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$PYTHON_ARCHIVE" --strip-components=1 -C resources/runtime/python
+          chmod +x resources/runtime/python/bin/python
+          PYTHON_VERSION=$(resources/runtime/python/bin/python --version 2>&1 | awk '{print $2}')
+          python3 - "$PYTHON_VERSION" "$PYTHON_PLATFORM" "$PYTHON_ENTRY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version, platform, entry = sys.argv[1:4]
+          Path("resources/runtime/python/runtime.json").write_text(
+              json.dumps(
+                  {
+                      "name": "python",
+                      "implementation": "cpython",
+                      "version": version,
+                      "platform": platform,
+                      "entry": entry,
+                      "managed_by": "tyclaw-release",
+                      "layout_version": 1,
+                  },
+                  indent=2,
+              ) + "\n"
+          )
+          PY
+          resources/runtime/python/bin/python --version
 
       - name: Save macOS arm64 runtime downloads
         if: steps.macos_arm64_runtime_cache.outputs.cache-hit != 'true'
@@ -889,6 +1071,10 @@ jobs:
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/uv" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/uv" \) -type f | grep -q .; then
             echo "Missing bundled uv in macOS app resources" >&2
+            exit 1
+          fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/runtime/python/bin/python" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/runtime/python/bin/python" \) -type f | grep -q .; then
+            echo "Missing bundled Python runtime in macOS app resources" >&2
             exit 1
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/agent-browser" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/agent-browser" \) -type f | grep -q .; then
