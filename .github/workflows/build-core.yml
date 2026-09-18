@@ -85,6 +85,7 @@ jobs:
 
       # 契约 schema 包：把 tailos-core 已提交的 tailos-protocol/schema/*.json 打包随 Release 发布，
       # 供桌面端（tyclaw）按版本拉取、生成 TS 并 CI 防漂（见 tyclaw #1446）。平台无关，发一次即可。
+      # 因此本步是幂等的：已发布时只比对内容、不重新上传，避免同一版本号下产物 sha256 漂移。
       - name: Resolve ref
         id: ref
         run: |
@@ -118,8 +119,28 @@ jobs:
           # 桌面端按记录值校验，不依赖跨次重建的字节确定性。
           tar -czf "$ASSET" -C "$SCHEMA_DIR" $(cd "$SCHEMA_DIR" && ls *.json | sort)
           sha256sum "$ASSET" | tee "${ASSET}.sha256"
+
+          # tar 字节不可复现（含文件 mtime），重复上传会让已发布产物的 sha256 变化，
+          # 直接打破消费端 lock 与 CI 防漂闸。已存在时改为比对内容：
+          # 一致则保留既有产物不动，不一致说明源码 schema 与已发布版本漂移，必须显式失败。
+          if gh release view "runtime-v${VERSION}" --repo "${{ github.repository }}" \
+               --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            PUBLISHED_DIR="$(mktemp -d)"
+            gh release download "runtime-v${VERSION}" --repo "${{ github.repository }}" \
+              --pattern "$ASSET" --dir "$PUBLISHED_DIR" --clobber
+            mkdir -p "$PUBLISHED_DIR/extract"
+            tar -xzf "$PUBLISHED_DIR/$ASSET" -C "$PUBLISHED_DIR/extract"
+            if diff -r "$SCHEMA_DIR" "$PUBLISHED_DIR/extract" >/dev/null 2>&1; then
+              echo "$ASSET already published for runtime-v${VERSION} with identical content; keeping it as-is."
+              exit 0
+            fi
+            echo "SCHEMA_DRIFT: $ASSET is already published for runtime-v${VERSION} but its content differs from $SCHEMA_DIR." >&2
+            echo "Bump the runtime version instead of overwriting an already published artifact." >&2
+            exit 1
+          fi
+
           gh release upload "runtime-v${VERSION}" "$ASSET" "${ASSET}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+            --repo "${{ github.repository }}"
           echo "Uploaded $ASSET to runtime-v${VERSION}"
 
   # ---------------------------------------------------------------------------
