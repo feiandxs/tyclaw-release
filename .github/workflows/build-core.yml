@@ -7,6 +7,7 @@
 # 产物集（每平台一个归档 + .sha256 旁证）：
 #   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host
 #   - Linux x64         : tailos, tailos-python-shim, tailos-browser-host
+#   - Linux arm64       : tailos, tailos-python-shim, tailos-browser-host
 #   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe,
 #                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe
 #
@@ -45,6 +46,7 @@ on:
           - macos-x64
           - macos-arm64
           - linux-x64
+          - linux-arm64
           - windows-x64
 
 env:
@@ -346,6 +348,78 @@ jobs:
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-linux-x64.tar.gz"
+          tar -czf "$ASSET" -C stage .
+          sha256sum "$ASSET" | tee "${ASSET}.sha256"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
+            --repo "${{ github.repository }}" --clobber
+
+  # ---------------------------------------------------------------------------
+  build-core-linux-arm64:
+    needs: prepare-release
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'linux-arm64')) ||
+        (github.event_name == 'repository_dispatch' && (github.event.client_payload.os == '' || github.event.client_payload.os == 'all' || github.event.client_payload.os == 'linux-arm64'))
+      }}
+    # ARM64 托管 runner（本仓库为 public，此类 runner 免费且不限量）；原生 aarch64 构建，不需要 --target 交叉编译。
+    # 与 linux-x64 job 一致地选用 22.04，把 glibc 下限压在 2.35。
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Resolve inputs
+        id: vars
+        run: |
+          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clone tailos-core from GitLab
+        run: |
+          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
+          REF="${{ steps.vars.outputs.ref }}"
+          git clone "$REPO_URL" source
+          if [ -n "$REF" ]; then
+            git -C source checkout --detach "$REF"
+          fi
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust-core
+          key: ${{ runner.arch }}
+          cache-bin: "false"
+          workspaces: |
+            source -> target
+
+      - name: Build runtime (linux arm64)
+        working-directory: source
+        run: |
+          cargo build --release -p tailos-cli -p tailos-browser-host --bins
+          STAGE="$GITHUB_WORKSPACE/stage"
+          mkdir -p "$STAGE"
+          cp target/release/tailos "$STAGE/"
+          cp target/release/tailos-python-shim "$STAGE/"
+          cp target/release/tailos-browser-host "$STAGE/"
+          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
+          file "$STAGE"/*
+
+      - name: Package + checksum
+        id: pkg
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          ASSET="tailos-runtime-${VERSION}-linux-arm64.tar.gz"
           tar -czf "$ASSET" -C stage .
           sha256sum "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
