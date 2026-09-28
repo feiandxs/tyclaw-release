@@ -15,6 +15,7 @@ on:
           - macos-x64
           - macos-arm64
           - windows-x64
+          - linux-x64
       tag:
         description: "Git tag to build (optional, defaults to default branch HEAD)"
         required: false
@@ -1732,9 +1733,416 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           done
 
+  build-linux-x64:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'linux-x64')) ||
+        (github.event_name == 'repository_dispatch' && (github.event.client_payload.os == '' || github.event.client_payload.os == 'all' || github.event.client_payload.os == 'linux-x64'))
+      }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install deb packaging tools
+        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg
+
+      - name: Clone source from GitLab
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git"
+          if [ -n "$TAG" ]; then
+            echo "Cloning tagged source: $TAG"
+            git clone --depth 1 --branch "$TAG" "$REPO_URL" source
+          else
+            echo "No tag provided, cloning default branch HEAD"
+            git clone --depth 1 "$REPO_URL" source
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Read source commit
+        id: git_ref
+        working-directory: source
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source short SHA: $SHORT_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/electron
+          key: Linux-electron-${{ hashFiles('source/apps/desktop/package.json') }}
+          restore-keys: |
+            Linux-electron-
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile --filter desktop...
+
+      - name: Build packages
+        working-directory: source
+        run: pnpm --filter 'desktop^...' build
+
+      - name: Fetch tailos runtime (linux x64)
+        working-directory: source
+        run: |
+          node scripts/ensure-tailos-cli.mjs --force
+          test -x apps/desktop/resources/bin/tailos
+          test -x apps/desktop/resources/bin/tailos-python-shim
+          file apps/desktop/resources/bin/tailos*
+
+      - name: Fetch agent-browser (linux x64)
+        working-directory: source
+        env:
+          TAILOS_AGENT_BROWSER_TARGET_PLATFORM: linux
+          TAILOS_AGENT_BROWSER_TARGET_ARCH: x64
+        run: |
+          node scripts/ensure-agent-browser.mjs --force
+          test -x apps/desktop/resources/bin/agent-browser
+          test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
+          apps/desktop/resources/bin/agent-browser --version
+
+      - name: Resolve Linux x64 Python standalone asset
+        id: linux_x64_python_asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_VERSION_SERIES: ${{ env.PYTHON_VERSION_SERIES }}
+          PYTHON_TARGET: x86_64-unknown-linux-gnu
+        run: |
+          set -euo pipefail
+          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
+          python3 -c '
+          import json, os, re, sys
+          series = os.environ["PYTHON_VERSION_SERIES"]
+          target = os.environ["PYTHON_TARGET"]
+          pattern = re.compile(
+              rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
+          )
+          payload = json.loads(sys.argv[1])
+          assets = payload.get("assets") or []
+          candidates = []
+          for asset in assets:
+              name = str(asset.get("name") or "")
+              match = pattern.match(name)
+              if not match:
+                  continue
+              version = tuple(int(part) for part in (series + "." + match.group("patch")).split("."))
+              candidates.append((version, match.group("build"), name, str(asset.get("url") or "")))
+          if not candidates:
+              available = [
+                  str(asset.get("name") or "")
+                  for asset in assets
+                  if f"-{target}-install_only.tar.gz" in str(asset.get("name") or "")
+              ]
+              available_text = ", ".join(available) if available else "<none>"
+              raise SystemExit(
+                  f"Unable to find python-build-standalone {series} install_only asset for {target}. Available candidates: {available_text}"
+              )
+          candidates.sort(reverse=True)
+          _, _, name, url = candidates[0]
+          if not url:
+              raise SystemExit(f"Resolved Python asset has no download URL: {name}")
+          print(f"Using Python standalone asset: {name}", file=sys.stderr)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"asset_name={name}\n")
+              fh.write(f"asset_url={url}\n")
+          ' "$assets_json"
+
+      - name: Restore Linux x64 runtime downloads
+        id: linux_x64_runtime_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: source/.runtime-cache/linux-x64
+          key: Linux-runtime-linux-x64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ steps.linux_x64_python_asset.outputs.asset_name }}
+
+      - name: Prepare Linux x64 runtime binaries
+        working-directory: source/apps/desktop
+        env:
+          PYTHON_ASSET_NAME: ${{ steps.linux_x64_python_asset.outputs.asset_name }}
+          PYTHON_ASSET_URL: ${{ steps.linux_x64_python_asset.outputs.asset_url }}
+          PYTHON_TARGET: x86_64-unknown-linux-gnu
+          PYTHON_PLATFORM: linux-x64
+          PYTHON_ENTRY: bin/python
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p resources/bin
+          rm -rf resources/runtime/python
+          mkdir -p resources/runtime/python
+          CACHE_DIR="../../.runtime-cache/linux-x64"
+          mkdir -p "$CACHE_DIR"
+
+          download_cached() {
+            local url="$1"
+            local output="$2"
+
+            if [ -s "$output" ]; then
+              echo "Using cached $(basename "$output")"
+              return
+            fi
+
+            local tmp="${output}.tmp"
+            rm -f "$tmp"
+            echo "Downloading $url"
+
+            local attempt=1
+            local max_attempts=6
+            until curl -fSL --connect-timeout 20 --max-time 300 "$url" -o "$tmp"; do
+              local status=$?
+              rm -f "$tmp"
+
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Download failed after $attempt attempts: $url" >&2
+                return "$status"
+              fi
+
+              echo "Download failed with exit code $status. Retrying in 10s ($attempt/$max_attempts)..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+
+            mv "$tmp" "$output"
+          }
+
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+
+          BUN_ARCHIVE="bun-linux-x64.zip"
+          BUN_ASSET_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_ARCHIVE}"
+          download_cached "$BUN_ASSET_URL" "$CACHE_DIR/$BUN_ARCHIVE"
+          unzip -o "$CACHE_DIR/$BUN_ARCHIVE" -d "$TMP_DIR/bun-extract"
+          cp "$TMP_DIR/bun-extract/bun-linux-x64/bun" resources/bin/bun
+          chmod +x resources/bin/bun
+          echo "bun version: $(resources/bin/bun --version)"
+
+          UV_ARCHIVE="uv-x86_64-unknown-linux-gnu.tar.gz"
+          UV_ASSET_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}"
+          download_cached "$UV_ASSET_URL" "$CACHE_DIR/$UV_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$UV_ARCHIVE" -C "$TMP_DIR"
+          cp "$TMP_DIR/uv-x86_64-unknown-linux-gnu/uv" resources/bin/uv
+          chmod +x resources/bin/uv
+          echo "uv version: $(resources/bin/uv --version)"
+
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          RG_ASSET_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          download_cached "$RG_ASSET_URL" "$CACHE_DIR/$RG_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$RG_ARCHIVE" -C "$TMP_DIR"
+          RG_DIR="$TMP_DIR/ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl"
+          cp "$RG_DIR/rg" resources/bin/rg
+          chmod +x resources/bin/rg
+          echo "ripgrep version: $(resources/bin/rg --version | head -n 1)"
+
+          if [ -z "${PYTHON_ASSET_NAME:-}" ] || [ -z "${PYTHON_ASSET_URL:-}" ]; then
+            echo "Python standalone asset resolution did not produce a name and URL" >&2
+            exit 1
+          fi
+          PYTHON_ARCHIVE="$PYTHON_ASSET_NAME"
+          echo "Using Python standalone asset: $PYTHON_ARCHIVE"
+          download_cached "$PYTHON_ASSET_URL" "$CACHE_DIR/$PYTHON_ARCHIVE"
+          tar -xzf "$CACHE_DIR/$PYTHON_ARCHIVE" --strip-components=1 -C resources/runtime/python
+          chmod +x resources/runtime/python/bin/python
+          PYTHON_VERSION=$(resources/runtime/python/bin/python --version 2>&1 | awk '{print $2}')
+          python3 - "$PYTHON_VERSION" "$PYTHON_PLATFORM" "$PYTHON_ENTRY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version, platform, entry = sys.argv[1:4]
+          Path("resources/runtime/python/runtime.json").write_text(
+              json.dumps(
+                  {
+                      "name": "python",
+                      "implementation": "cpython",
+                      "version": version,
+                      "platform": platform,
+                      "entry": entry,
+                      "managed_by": "tyclaw-release",
+                      "layout_version": 1,
+                  },
+                  indent=2,
+              ) + "\n"
+          )
+          PY
+          resources/runtime/python/bin/python --version
+
+      - name: Save Linux x64 runtime downloads
+        if: steps.linux_x64_runtime_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: source/.runtime-cache/linux-x64
+          key: ${{ steps.linux_x64_runtime_cache.outputs.cache-primary-key }}
+
+      - name: Resolve desktop release channel
+        id: release_channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build desktop (renderer + main)
+        working-directory: source/apps/desktop
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            pnpm run build:release-assets:preview
+          else
+            pnpm run build:release-assets
+          fi
+
+      - name: Read version from package.json
+        id: pkg
+        working-directory: source/apps/desktop
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          else
+            APP_VERSION="$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+          echo "App version: $APP_VERSION"
+
+      - name: Resolve upload channel
+        id: upload
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
+            echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Linux app
+        working-directory: source/apps/desktop
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_TARGET_PLATFORM=linux TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --linux deb --x64 --publish never
+          else
+            TAILOS_RELEASE_CHANNEL=stable TAILOS_TARGET_PLATFORM=linux pnpm exec electron-builder --config electron-builder.config.cjs --linux deb --x64 --publish never
+          fi
+
+      - name: Smoke test Linux unpacked app
+        working-directory: source/apps/desktop
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            APP_BIN="release/${VERSION}/linux-unpacked/triomate-dev"
+          else
+            APP_BIN="release/${VERSION}/linux-unpacked/triomate"
+          fi
+          if [ ! -x "$APP_BIN" ]; then
+            echo "Unable to find Linux app executable: $APP_BIN" >&2
+            find "release/${VERSION}" -maxdepth 3 -type f -printf '%p\n' >&2 || true
+            exit 1
+          fi
+          ROOT="release/${VERSION}/linux-unpacked/resources"
+          test -x "$ROOT/bin/tailos"
+          test -x "$ROOT/bin/rg"
+          test -x "$ROOT/bin/bun"
+          test -x "$ROOT/bin/uv"
+          test -x "$ROOT/bin/agent-browser"
+          test -f "$ROOT/agent-browser/skill-data/core/SKILL.md"
+          test -e "$ROOT/runtime/python/bin/python"
+          "$ROOT/runtime/python/bin/python" --version
+          test -f "$ROOT/app-update.yml"
+          grep -q 'provider: generic' "$ROOT/app-update.yml"
+          node scripts/smoke-test-app.mjs "$APP_BIN"
+
+      - name: Upload Linux x64 artifacts to R2
+        working-directory: source/apps/desktop
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          RELEASE_DIR="release/${VERSION}"
+          UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
+          ARTIFACT_PRODUCT_NAME="${{ steps.upload.outputs.desktop_artifact_product_name }}"
+          STAGING_DIR=$(mktemp -d)
+          ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
+          LINUX_TARGET="${ROOT_TARGET}/linux/x64"
+
+          pip3 install awscli --quiet
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-Linux-${UPLOAD_VERSION}.deb"
+            METADATA_FILE="latest-linux.yml"
+          else
+            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-${UPLOAD_VERSION}-linux-x64.deb"
+            METADATA_FILE="dev-linux.yml"
+          fi
+          test -f "$RELEASE_DIR/$EXPECTED_DEB" || { echo "Missing Linux deb: $RELEASE_DIR/$EXPECTED_DEB" >&2; find "$RELEASE_DIR" -maxdepth 1 -type f -printf '%f\n' >&2; exit 1; }
+          test -f "$RELEASE_DIR/$METADATA_FILE" || { echo "Missing $METADATA_FILE" >&2; exit 1; }
+          cp "$RELEASE_DIR/$EXPECTED_DEB" "$STAGING_DIR/"
+          cp "$RELEASE_DIR/$METADATA_FILE" "$STAGING_DIR/"
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
+            EXISTING_DEV_FILES=$(aws s3 ls "${LINUX_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              | awk '{print $4}' \
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.deb$' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              echo "Removing stale dev artifact: $existing"
+              aws s3 rm "${LINUX_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
+
+          for f in "$STAGING_DIR"/*; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f") to linux/x64..."
+            aws s3 cp "$f" "${LINUX_TARGET}/$(basename "$f")" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          done
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ] && [ -f changelog.yml ]; then
+            aws s3 cp changelog.yml "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
+
   cleanup:
     runs-on: ubuntu-latest
-    needs: [build-mac-x64, build-mac-arm64, build-win]
+    needs: [build-mac-x64, build-mac-arm64, build-win, build-linux-x64]
     if: >-
       ${{
         always() &&
@@ -1745,7 +2153,8 @@ jobs:
         contains(fromJSON('["success","skipped"]'), needs.build-mac-x64.result) &&
         contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) &&
         contains(fromJSON('["success","skipped"]'), needs.build-win.result) &&
-        (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success')
+        contains(fromJSON('["success","skipped"]'), needs.build-linux-x64.result) &&
+        (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success' || needs.build-linux-x64.result == 'success')
       }}
     steps:
       - name: Clean old versions on R2
@@ -1809,5 +2218,19 @@ jobs:
                 --endpoint-url "${{ secrets.R2_ENDPOINT }}"
               aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/windows/x64/${exe}.blockmap" \
                 --endpoint-url "${{ secrets.R2_ENDPOINT }}" 2>/dev/null || true
+            fi
+          done
+
+          LINUX_OBJECTS=$(aws s3 ls "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/linux/x64/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+          DEBS=$(printf '%s\n' "$LINUX_OBJECTS" \
+            | grep '\.deb$' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}' || true)
+          COUNT=0
+          for deb in $DEBS; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt "$R2_STABLE_RELEASES_TO_KEEP" ]; then
+              echo "Deleting old Linux artifact: linux/x64/$deb"
+              aws s3 rm "s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}/linux/x64/$deb" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
             fi
           done
