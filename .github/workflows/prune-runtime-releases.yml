@@ -1,0 +1,53 @@
+# Keep the three newest runtime-v* GitHub Releases and delete the rest.
+# Desktop and other tags are left alone. Version order is SemVer, not publish time.
+# Runs after a successful runtime build, every Monday, and on manual dispatch.
+
+name: Prune Runtime Releases
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * 1"
+  workflow_run:
+    workflows: ["Build Core Runtime Release"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete runtime releases beyond the newest three
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: "3"
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tags < <(
+            gh release list --repo "$REPO" --limit 1000 --json tagName \
+              --jq '.[] | select(.tagName | startswith("runtime-v")) | .tagName' \
+              | sort -V
+          )
+          count=${#tags[@]}
+          if [ "$count" -le "$KEEP" ]; then
+            echo "Found $count runtime release(s); nothing to delete."
+            printf 'keep %s\n' "${tags[@]}"
+            exit 0
+          fi
+          keep_from=$((count - KEEP))
+          echo "Keeping:"
+          printf '  %s\n' "${tags[@]:keep_from}"
+          failed=0
+          for tag in "${tags[@]:0:keep_from}"; do
+            echo "Deleting $tag"
+            if ! gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag; then
+              echo "Failed to delete $tag" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
