@@ -135,15 +135,14 @@ jobs:
           PYTHON_TARGET: x86_64-apple-darwin
         run: |
           set -euo pipefail
-          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
-          python3 -c '
+          gh release view --repo astral-sh/python-build-standalone --json assets | python3 -c '
           import json, os, re, sys
           series = os.environ["PYTHON_VERSION_SERIES"]
           target = os.environ["PYTHON_TARGET"]
           pattern = re.compile(
               rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
           )
-          payload = json.loads(sys.argv[1])
+          payload = json.load(sys.stdin)
           assets = payload.get("assets") or []
           candidates = []
           for asset in assets:
@@ -171,7 +170,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"asset_name={name}\n")
               fh.write(f"asset_url={url}\n")
-          ' "$assets_json"
+          '
 
       - name: Restore macOS x64 runtime downloads
         id: macos_x64_runtime_cache
@@ -715,15 +714,14 @@ jobs:
           PYTHON_TARGET: aarch64-apple-darwin
         run: |
           set -euo pipefail
-          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
-          python3 -c '
+          gh release view --repo astral-sh/python-build-standalone --json assets | python3 -c '
           import json, os, re, sys
           series = os.environ["PYTHON_VERSION_SERIES"]
           target = os.environ["PYTHON_TARGET"]
           pattern = re.compile(
               rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
           )
-          payload = json.loads(sys.argv[1])
+          payload = json.load(sys.stdin)
           assets = payload.get("assets") or []
           candidates = []
           for asset in assets:
@@ -751,7 +749,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"asset_name={name}\n")
               fh.write(f"asset_url={url}\n")
-          ' "$assets_json"
+          '
 
       - name: Restore macOS arm64 runtime downloads
         id: macos_arm64_runtime_cache
@@ -1823,15 +1821,14 @@ jobs:
           PYTHON_TARGET: x86_64-unknown-linux-gnu
         run: |
           set -euo pipefail
-          assets_json=$(gh release view --repo astral-sh/python-build-standalone --json assets)
-          python3 -c '
+          gh release view --repo astral-sh/python-build-standalone --json assets | python3 -c '
           import json, os, re, sys
           series = os.environ["PYTHON_VERSION_SERIES"]
           target = os.environ["PYTHON_TARGET"]
           pattern = re.compile(
               rf"^cpython-{re.escape(series)}\.(?P<patch>\d+)\+(?P<build>[^-]+)-{re.escape(target)}-install_only\.tar\.gz$"
           )
-          payload = json.loads(sys.argv[1])
+          payload = json.load(sys.stdin)
           assets = payload.get("assets") or []
           candidates = []
           for asset in assets:
@@ -1859,7 +1856,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"asset_name={name}\n")
               fh.write(f"asset_url={url}\n")
-          ' "$assets_json"
+          '
 
       - name: Restore Linux x64 runtime downloads
         id: linux_x64_runtime_cache
