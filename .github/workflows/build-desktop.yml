@@ -1740,7 +1740,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Install deb packaging tools
-        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg
+        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg xvfb
 
       - name: Clone source from GitLab
         run: |
@@ -2081,7 +2081,7 @@ jobs:
           "$ROOT/runtime/python/bin/python" --version
           test -f "$ROOT/app-update.yml"
           grep -q 'provider: generic' "$ROOT/app-update.yml"
-          node scripts/smoke-test-app.mjs "$APP_BIN"
+          xvfb-run -a node scripts/smoke-test-app.mjs "$APP_BIN"
 
       - name: Upload Linux x64 artifacts to R2
         working-directory: source/apps/desktop
