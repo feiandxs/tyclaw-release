@@ -2104,7 +2104,7 @@ jobs:
             EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-Linux-${UPLOAD_VERSION}.deb"
             METADATA_FILE="latest-linux.yml"
           else
-            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-${UPLOAD_VERSION}-linux-x64.deb"
+            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-${UPLOAD_VERSION}-linux-amd64.deb"
             METADATA_FILE="dev-linux.yml"
           fi
           test -f "$RELEASE_DIR/$EXPECTED_DEB" || { echo "Missing Linux deb: $RELEASE_DIR/$EXPECTED_DEB" >&2; find "$RELEASE_DIR" -maxdepth 1 -type f -printf '%f\n' >&2; exit 1; }
