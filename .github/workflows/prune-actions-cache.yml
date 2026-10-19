@@ -39,6 +39,7 @@ jobs:
               elif (.key | startswith("macOS-electron-")) then "macOS-electron"
               elif (.key | startswith("macOS-runtime-")) then (.key | split("-") | .[0:4] | join("-"))
               elif (.key | startswith("Linux-electron-")) then "Linux-electron"
+              elif (.key | startswith("Linux-arm64-electron-")) then "Linux-arm64-electron"
               elif (.key | startswith("Linux-runtime-")) then (.key | split("-") | .[0:4] | join("-"))
               elif (.key | startswith("node-cache-")) then (.key | split("-") | .[0:4] | join("-"))
               elif (.key | test("^v[0-9]+-rust-")) then (.key | split("-") | .[0:6] | join("-"))
