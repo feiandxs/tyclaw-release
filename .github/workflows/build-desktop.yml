@@ -2378,7 +2378,10 @@ jobs:
           file "$APP_BIN" "$ROOT/bin/tailos" "$ROOT/bin/bun" "$ROOT/bin/uv"
           # Ubuntu 24.04 restricts unprivileged user namespaces; the unpacked
           # app needs the SUID sandbox helper (the deb postinst sets this on install).
-          chmod 4755 "$(dirname "$APP_BIN")/chrome-sandbox"
+          SANDBOX="$(dirname "$APP_BIN")/chrome-sandbox"
+          sudo chown root:root "$SANDBOX"
+          sudo chmod 4755 "$SANDBOX"
+          test "$(stat -c '%u:%g %a' "$SANDBOX")" = "0:0 4755"
           xvfb-run -a node scripts/smoke-test-app.mjs "$APP_BIN"
 
       - name: Upload Linux arm64 artifacts to R2
