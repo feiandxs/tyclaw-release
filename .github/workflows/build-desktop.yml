@@ -16,6 +16,7 @@ on:
           - macos-arm64
           - windows-x64
           - linux-x64
+          - linux-arm64
       tag:
         description: "Git tag to build (optional, defaults to default branch HEAD)"
         required: false
@@ -1740,7 +1741,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Install deb packaging tools
-        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg xvfb
+        run: sudo apt-get update && sudo apt-get install -y git-lfs fakeroot dpkg xvfb
 
       - name: Clone source from GitLab
         run: |
@@ -1757,6 +1758,9 @@ jobs:
             echo "No tag provided, cloning default branch HEAD"
             git clone --depth 1 "$REPO_URL" source
           fi
+          cd source
+          git lfs install --local
+          git lfs pull
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
@@ -2137,9 +2141,309 @@ jobs:
               --endpoint-url "${{ secrets.R2_ENDPOINT }}"
           fi
 
+  build-linux-arm64:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.os == 'all' || github.event.inputs.os == 'linux-arm64')) ||
+        (github.event_name == 'repository_dispatch' && (github.event.client_payload.os == '' || github.event.client_payload.os == 'all' || github.event.client_payload.os == 'linux-arm64'))
+      }}
+    # Native arm64 Linux runner. The arm64 deb must be produced on arm64: the
+    # bundled runtime binaries, Python runtime, and fpm packaging are all native.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Install deb packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-lfs fakeroot dpkg xvfb ruby ruby-dev build-essential \
+            libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libatspi2.0-0t64 libsecret-1-0 libnotify4
+          # electron-builder 24 downloads an x86-only fpm helper; USE_SYSTEM_FPM
+          # makes it use this native arm64 fpm instead (Spark deployment lesson:
+          # the bundled helper fails with "cannot execute binary file").
+          sudo gem install fpm --no-document
+          fpm --version
+
+      - name: Clone source from GitLab
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@gitlab.apexdata.com.cn/ty/triomate.git"
+          if [ -n "$TAG" ]; then
+            echo "Cloning tagged source: $TAG"
+            git clone --depth 1 --branch "$TAG" "$REPO_URL" source
+          else
+            echo "No tag provided, cloning default branch HEAD"
+            git clone --depth 1 "$REPO_URL" source
+          fi
+          cd source
+          # Spark deployment lesson: a clone without materialized LFS assets
+          # produced broken app images/icons. Always pull LFS before building.
+          git lfs install --local
+          git lfs pull
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Read source commit
+        id: git_ref
+        working-directory: source
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source short SHA: $SHORT_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/electron
+          key: Linux-arm64-electron-${{ hashFiles('source/apps/desktop/package.json') }}
+          restore-keys: |
+            Linux-arm64-electron-
+
+      - name: Install dependencies
+        working-directory: source
+        run: pnpm install --frozen-lockfile --filter desktop...
+
+      - name: Build packages
+        working-directory: source
+        run: pnpm --filter 'desktop^...' build
+
+      - name: Restore Linux arm64 runtime downloads
+        id: linux_arm64_runtime_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: source/.runtime-cache/linux-arm64
+          key: Linux-runtime-linux-arm64-bun-${{ env.BUN_VERSION }}-uv-${{ env.UV_VERSION }}-rg-${{ env.RIPGREP_VERSION }}-py-${{ env.PYTHON_VERSION_SERIES }}
+
+      - name: Fetch tailos runtime (linux arm64)
+        working-directory: source
+        run: |
+          node scripts/ensure-tailos-cli.mjs --force
+          test -x apps/desktop/resources/bin/tailos
+          test -x apps/desktop/resources/bin/tailos-python-shim
+          file apps/desktop/resources/bin/tailos*
+
+      - name: Prepare Linux arm64 runtime binaries
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAILOS_AGENT_BROWSER_TARGET_PLATFORM: linux
+          TAILOS_AGENT_BROWSER_TARGET_ARCH: arm64
+          TAILOS_PYTHON_TARGET_PLATFORM: linux
+          TAILOS_PYTHON_TARGET_ARCH: arm64
+          TAILOS_BUN_TARGET_PLATFORM: linux
+          TAILOS_BUN_TARGET_ARCH: arm64
+          TAILOS_UV_TARGET_PLATFORM: linux
+          TAILOS_UV_TARGET_ARCH: arm64
+          TAILOS_RG_TARGET_PLATFORM: linux
+          TAILOS_RG_TARGET_ARCH: arm64
+        run: |
+          node scripts/ensure-agent-browser.mjs --force
+          node scripts/ensure-bundled-python.mjs
+          node scripts/ensure-bun.mjs
+          node scripts/ensure-uv.mjs
+          node scripts/ensure-ripgrep.mjs
+
+          test -x apps/desktop/resources/bin/agent-browser
+          test -f apps/desktop/resources/agent-browser/skill-data/core/SKILL.md
+          test -x apps/desktop/resources/bin/bun
+          test -x apps/desktop/resources/bin/uv
+          test -x apps/desktop/resources/bin/rg
+          test -e apps/desktop/resources/runtime/python/bin/python
+          file apps/desktop/resources/bin/tailos apps/desktop/resources/bin/agent-browser apps/desktop/resources/bin/bun apps/desktop/resources/bin/uv apps/desktop/resources/bin/rg
+          apps/desktop/resources/bin/bun --version
+          apps/desktop/resources/bin/uv --version
+          apps/desktop/resources/bin/rg --version | head -n 1
+          apps/desktop/resources/runtime/python/bin/python --version
+
+      - name: Save Linux arm64 runtime downloads
+        if: steps.linux_arm64_runtime_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: source/.runtime-cache/linux-arm64
+          key: ${{ steps.linux_arm64_runtime_cache.outputs.cache-primary-key }}
+
+      - name: Resolve desktop release channel
+        id: release_channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build desktop (renderer + main)
+        working-directory: source/apps/desktop
+        run: |
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            pnpm run build:release-assets:preview
+          else
+            pnpm run build:release-assets
+          fi
+
+      - name: Read version from package.json
+        id: pkg
+        working-directory: source/apps/desktop
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            APP_VERSION="${VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          else
+            APP_VERSION="$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+          echo "App version: $APP_VERSION"
+
+      - name: Resolve upload channel
+        id: upload
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "artifact_version=${{ steps.pkg.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "explicit_tag=true" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=prod" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact_version=${{ steps.pkg.outputs.app_version }}" >> "$GITHUB_OUTPUT"
+            echo "explicit_tag=false" >> "$GITHUB_OUTPUT"
+            echo "desktop_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "desktop_product_name=Trio Mate-Dev" >> "$GITHUB_OUTPUT"
+            echo "desktop_artifact_product_name=Trio-Mate-Dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Linux arm64 app
+        working-directory: source/apps/desktop
+        env:
+          USE_SYSTEM_FPM: "true"
+        run: |
+          # deb only: do not add AppImage/snap targets here.
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            TAILOS_RELEASE_CHANNEL=preview TAILOS_TARGET_PLATFORM=linux TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --linux deb --arm64 --publish never
+          else
+            TAILOS_RELEASE_CHANNEL=stable TAILOS_TARGET_PLATFORM=linux pnpm exec electron-builder --config electron-builder.config.cjs --linux deb --arm64 --publish never
+          fi
+
+      - name: Smoke test Linux arm64 unpacked app
+        working-directory: source/apps/desktop
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            APP_BIN="release/${VERSION}/linux-arm64-unpacked/triomate-dev"
+          else
+            APP_BIN="release/${VERSION}/linux-arm64-unpacked/triomate"
+          fi
+          if [ ! -x "$APP_BIN" ]; then
+            echo "Unable to find Linux arm64 app executable: $APP_BIN" >&2
+            find "release/${VERSION}" -maxdepth 3 -type f -printf '%p\n' >&2 || true
+            exit 1
+          fi
+          ROOT="release/${VERSION}/linux-arm64-unpacked/resources"
+          test -x "$ROOT/bin/tailos"
+          test -x "$ROOT/bin/rg"
+          test -x "$ROOT/bin/bun"
+          test -x "$ROOT/bin/uv"
+          test -x "$ROOT/bin/agent-browser"
+          test -f "$ROOT/agent-browser/skill-data/core/SKILL.md"
+          test -e "$ROOT/runtime/python/bin/python"
+          "$ROOT/runtime/python/bin/python" --version
+          test -f "$ROOT/app-update.yml"
+          grep -q 'provider: generic' "$ROOT/app-update.yml"
+          file "$APP_BIN" "$ROOT/bin/tailos" "$ROOT/bin/bun" "$ROOT/bin/uv"
+          # Ubuntu 24.04 restricts unprivileged user namespaces; the unpacked
+          # app needs the SUID sandbox helper (the deb postinst sets this on install).
+          chmod 4755 "$(dirname "$APP_BIN")/chrome-sandbox"
+          xvfb-run -a node scripts/smoke-test-app.mjs "$APP_BIN"
+
+      - name: Upload Linux arm64 artifacts to R2
+        working-directory: source/apps/desktop
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          VERSION="${{ steps.pkg.outputs.app_version }}"
+          RELEASE_DIR="release/${VERSION}"
+          UPLOAD_VERSION="${{ steps.upload.outputs.artifact_version }}"
+          ARTIFACT_PRODUCT_NAME="${{ steps.upload.outputs.desktop_artifact_product_name }}"
+          STAGING_DIR=$(mktemp -d)
+          ROOT_TARGET="s3://${R2_BUCKET}/${R2_RELEASE_PREFIX}"
+          LINUX_TARGET="${ROOT_TARGET}/linux/arm64"
+
+          pip3 install awscli --quiet
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ]; then
+            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-Linux-${UPLOAD_VERSION}.deb"
+            METADATA_FILE="latest-linux.yml"
+            SOURCE_METADATA="latest-linux-arm64.yml"
+            [ -f "$RELEASE_DIR/$SOURCE_METADATA" ] || SOURCE_METADATA="latest-linux.yml"
+          else
+            EXPECTED_DEB="${ARTIFACT_PRODUCT_NAME}-${UPLOAD_VERSION}-linux-arm64.deb"
+            METADATA_FILE="dev-linux.yml"
+            SOURCE_METADATA="dev-linux-arm64.yml"
+            [ -f "$RELEASE_DIR/$SOURCE_METADATA" ] || SOURCE_METADATA="dev-linux.yml"
+          fi
+          test -f "$RELEASE_DIR/$EXPECTED_DEB" || { echo "Missing Linux arm64 deb: $RELEASE_DIR/$EXPECTED_DEB" >&2; find "$RELEASE_DIR" -maxdepth 1 -type f -printf '%f\n' >&2; exit 1; }
+          test -f "$RELEASE_DIR/$SOURCE_METADATA" || { echo "Missing $SOURCE_METADATA" >&2; find "$RELEASE_DIR" -maxdepth 1 -type f -printf '%f\n' >&2; exit 1; }
+          cp "$RELEASE_DIR/$EXPECTED_DEB" "$STAGING_DIR/"
+          # electron-builder names non-x64 Linux metadata latest-linux-<arch>.yml;
+          # the download worker/updater contract uses the per-directory canonical name.
+          cp "$RELEASE_DIR/$SOURCE_METADATA" "$STAGING_DIR/$METADATA_FILE"
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" != "true" ]; then
+            EXISTING_DEV_FILES=$(aws s3 ls "${LINUX_TARGET}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              | awk '{print $4}' \
+              | grep -Ei -- '(^|-)dev([.-]|-|$)' \
+              | grep -E '\.deb$' || true)
+            for existing in $EXISTING_DEV_FILES; do
+              echo "Removing stale dev artifact: $existing"
+              aws s3 rm "${LINUX_TARGET}/$existing" \
+                --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+            done
+          fi
+
+          for f in "$STAGING_DIR"/*; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f") to linux/arm64..."
+            aws s3 cp "$f" "${LINUX_TARGET}/$(basename "$f")" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          done
+
+          if [ "${{ steps.upload.outputs.explicit_tag }}" = "true" ] && [ -f changelog.yml ]; then
+            aws s3 cp changelog.yml "${ROOT_TARGET}/changelog.yml" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          fi
+
   cleanup:
     runs-on: ubuntu-latest
-    needs: [build-mac-x64, build-mac-arm64, build-win, build-linux-x64]
+    needs: [build-mac-x64, build-mac-arm64, build-win, build-linux-x64, build-linux-arm64]
     if: >-
       ${{
         always() &&
@@ -2151,7 +2455,8 @@ jobs:
         contains(fromJSON('["success","skipped"]'), needs.build-mac-arm64.result) &&
         contains(fromJSON('["success","skipped"]'), needs.build-win.result) &&
         contains(fromJSON('["success","skipped"]'), needs.build-linux-x64.result) &&
-        (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success' || needs.build-linux-x64.result == 'success')
+        contains(fromJSON('["success","skipped"]'), needs.build-linux-arm64.result) &&
+        (needs.build-mac-x64.result == 'success' || needs.build-mac-arm64.result == 'success' || needs.build-win.result == 'success' || needs.build-linux-x64.result == 'success' || needs.build-linux-arm64.result == 'success')
       }}
     steps:
       - name: Clean old versions on R2
@@ -2231,3 +2536,24 @@ jobs:
                 --endpoint-url "${{ secrets.R2_ENDPOINT }}"
             fi
           done
+
+          clean_linux_dir() {
+            local prefix="$1"
+            local objects
+            local debs
+            local count
+            objects=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}")
+            debs=$(printf '%s\n' "$objects" \
+              | grep '\.deb$' | grep -Evi -- '(^|-)dev([.-]|-|$)' | sort -k1,1r -k2,2r | awk '{print $4}' || true)
+            count=0
+            for deb in $debs; do
+              count=$((count + 1))
+              if [ $count -gt "$R2_STABLE_RELEASES_TO_KEEP" ]; then
+                echo "Deleting old Linux artifact: ${prefix}/$deb"
+                aws s3 rm "s3://${R2_BUCKET}/${prefix}/$deb" \
+                  --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+              fi
+            done
+          }
+          clean_linux_dir "${R2_RELEASE_PREFIX}/linux/arm64"
