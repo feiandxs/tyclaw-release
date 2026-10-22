@@ -1,4 +1,4 @@
-# Keep the three newest runtime-v* GitHub Releases and delete the rest.
+# Keep the ten newest runtime-v* GitHub Releases and delete the rest.
 # Desktop and other tags are left alone. Version order is SemVer, not publish time.
 # Runs after a successful runtime build, every Monday, and on manual dispatch.
 
@@ -20,11 +20,11 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Delete runtime releases beyond the newest three
+      - name: Delete runtime releases beyond the newest ten
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          KEEP: "3"
+          KEEP: "10"
         shell: bash
         run: |
           set -euo pipefail
