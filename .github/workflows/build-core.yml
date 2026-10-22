@@ -37,7 +37,7 @@ on:
         required: true
         type: string
       ref:
-        description: "ty/triomate git ref to build: commit SHA (preferred), tag or branch"
+        description: "ty/triomate git ref to build: full 40-char commit SHA (preferred), tag or branch (abbreviated SHAs cannot be fetched)"
         required: true
         type: string
       os:
