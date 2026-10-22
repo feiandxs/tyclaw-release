@@ -1,8 +1,9 @@
 # Build Core Runtime Release
 #
-# 独立构建并发布 tailos-core（Rust runtime）的预编译二进制。
-# 与 build-desktop.yml 解耦：源码在私有 GitLab（ty/tailos-core），
-# 产物发布到本 public GitHub 仓库的 Release（任何人/CI 无需 token 直链下载）。
+# 独立构建并发布 Rust runtime（tailos）的预编译二进制。
+# 与 build-desktop.yml 解耦：源码在私有 GitLab ty/triomate 的 crates/（原 ty/tailos-core，
+# 2026-10 迁回 monorepo，见 ty/triomate#3305），产物发布到本 public GitHub 仓库的 Release
+# （任何人/CI 无需 token 直链下载）。
 #
 # 产物集（每平台一个归档 + .sha256 旁证）：
 #   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host
@@ -11,11 +12,14 @@
 #   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe,
 #                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe
 #
-# 结构：prepare-release 先建好 Release（串行化，避免多平台并发创建竞态），
-#       各平台 job needs 它、只上传自己的 asset（gh release upload --clobber）。
+# 结构：prepare-release 先解析源码 SHA、建好 Release（串行化，避免多平台并发创建竞态），
+#       各平台 job needs 它、按同一个 SHA 构建并只上传自己的 asset（gh release upload --clobber）。
 #
-# 触发：手动 workflow_dispatch（version + os），或 repository_dispatch（GitLab CI 远程触发）。
+# 触发：手动 workflow_dispatch（version + ref + os + publish），或 repository_dispatch（GitLab CI 远程触发）。
 # Release tag：runtime-v<version>（独立前缀，避免与桌面发布 tag 撞车）。
+#
+# publish=false 为 dry-run：按 ref 构建全部产物但不建 Release、不上传 asset，
+# 产物改为 workflow artifact（dry-run-<platform>），用于与已发布版本比对。
 
 name: Build Core Runtime Release
 
@@ -29,12 +33,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Runtime version, e.g. 0.1.0 (tag = runtime-v<version>)"
+        description: "Runtime version, e.g. 1.39.0 (tag = runtime-v<version>)"
         required: true
         type: string
       ref:
-        description: "tailos-core git ref/tag to build (optional, default branch HEAD)"
-        required: false
+        description: "ty/triomate git ref to build: full 40-char commit SHA (preferred), tag or branch (abbreviated SHAs cannot be fetched)"
+        required: true
         type: string
       os:
         description: "Target os-platform build"
@@ -48,28 +52,83 @@ on:
           - linux-x64
           - linux-arm64
           - windows-x64
+      publish:
+        description: "Publish to GitHub Release (false = dry-run, artifacts only)"
+        required: false
+        default: true
+        type: boolean
 
 env:
-  GITLAB_RUNTIME_REPO: "gitlab.apexdata.com.cn/ty/tailos-core.git"
+  GITLAB_SOURCE_REPO: "gitlab.apexdata.com.cn/ty/triomate.git"
+  # runtime 源码在 monorepo 的这个子目录（独立 Cargo workspace 根）。
+  RUNTIME_SUBDIR: "crates"
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 先建好 Release（一次），平台 job 只往里上传 asset，避免并发创建竞态。
+  # 先解析源码 SHA、建好 Release（一次），平台 job 只往里上传 asset，避免并发创建竞态。
   prepare-release:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.vars.outputs.version }}
+      publish: ${{ steps.vars.outputs.publish }}
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
-      - name: Resolve version
+      - name: Resolve inputs
         id: vars
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            VERSION="${{ github.event.inputs.version }}"
+            REF="${{ github.event.inputs.ref }}"
+            PUBLISH="${{ github.event.inputs.publish }}"
           else
-            echo "version=${{ github.event.client_payload.version }}" >> "$GITHUB_OUTPUT"
+            VERSION="${{ github.event.client_payload.version }}"
+            REF="${{ github.event.client_payload.ref }}"
+            PUBLISH="${{ github.event.client_payload.publish }}"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+          if [ -z "$REF" ]; then
+            echo "ref (ty/triomate commit SHA / tag / branch) is required" >&2
+            exit 1
+          fi
+          if [ "$PUBLISH" = "false" ]; then
+            PUBLISH=false
+          else
+            PUBLISH=true
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION ref=$REF publish=$PUBLISH"
+
+      # 只取 crates/ 子树：fetch 指定 ref 的单个 commit，cone sparse-checkout 跳过 monorepo 其余目录，
+      # 并跳过 LFS smudge（runtime 源码不含 LFS 对象）。
+      - name: Fetch ty/triomate source (crates/)
+        id: source
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          REF="${{ steps.vars.outputs.ref }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "$REF"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          SHA="$(git -C source rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved ty/triomate ref '$REF' -> $SHA"
+          test -f "source/${{ env.RUNTIME_SUBDIR }}/Cargo.toml"
+          # 版本号单一来源是 crates/Cargo.toml 的 [workspace.package] version；与输入不一致时只提示，不中断。
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "source/${{ env.RUNTIME_SUBDIR }}/Cargo.toml" | head -n1)"
+          if [ "$CARGO_VERSION" != "${{ steps.vars.outputs.version }}" ]; then
+            echo "::warning::crates/Cargo.toml workspace version is '$CARGO_VERSION' but input version is '${{ steps.vars.outputs.version }}'"
           fi
 
       - name: Ensure GitHub Release exists
+        if: steps.vars.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -81,37 +140,18 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "Runtime v${VERSION}" \
-              --notes "tailos-core runtime ${VERSION}. Prebuilt binaries per platform (tar.gz/zip + .sha256)." \
+              --notes "Trio Mate runtime ${VERSION}. Source: ty/triomate@${{ steps.source.outputs.sha }} (crates/). Prebuilt binaries per platform (tar.gz/zip + .sha256)." \
               --target main
           fi
 
-      # 契约 schema 包：把 tailos-core 已提交的 tailos-protocol/schema/*.json 打包随 Release 发布，
-      # 供桌面端（tyclaw）按版本拉取、生成 TS 并 CI 防漂（见 tyclaw #1446）。平台无关，发一次即可。
+      # 契约 schema 包：把已提交的 crates/tailos-protocol/schema/*.json 打包随 Release 发布，
+      # 供桌面端按版本拉取、生成 TS 并 CI 防漂（见 tyclaw #1446）。平台无关，发一次即可。
       # 因此本步是幂等的：已发布时只比对内容、不重新上传，避免同一版本号下产物 sha256 漂移。
-      - name: Resolve ref
-        id: ref
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core (schema source)
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.ref.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
-
-      - name: Package + upload protocol schema bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Package protocol schema bundle
+        id: schema
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
-          SCHEMA_DIR="source/tailos-protocol/schema"
+          SCHEMA_DIR="source/${{ env.RUNTIME_SUBDIR }}/tailos-protocol/schema"
           if ! ls "$SCHEMA_DIR"/*.json >/dev/null 2>&1; then
             echo "No protocol schema JSON found at $SCHEMA_DIR" >&2
             exit 1
@@ -121,6 +161,17 @@ jobs:
           # 桌面端按记录值校验，不依赖跨次重建的字节确定性。
           tar -czf "$ASSET" -C "$SCHEMA_DIR" $(cd "$SCHEMA_DIR" && ls *.json | sort)
           sha256sum "$ASSET" | tee "${ASSET}.sha256"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "dir=$SCHEMA_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload protocol schema bundle to GitHub Release
+        if: steps.vars.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          ASSET="${{ steps.schema.outputs.asset }}"
+          SCHEMA_DIR="${{ steps.schema.outputs.dir }}"
 
           # tar 字节不可复现（含文件 mtime），重复上传会让已发布产物的 sha256 变化，
           # 直接打破消费端 lock 与 CI 防漂闸。已存在时改为比对内容：
@@ -145,6 +196,16 @@ jobs:
             --repo "${{ github.repository }}"
           echo "Uploaded $ASSET to runtime-v${VERSION}"
 
+      - name: Upload protocol schema bundle as dry-run artifact
+        if: steps.vars.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-schema
+          path: |
+            ${{ steps.schema.outputs.asset }}
+            ${{ steps.schema.outputs.asset }}.sha256
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
   build-core-mac-x64:
     needs: prepare-release
@@ -155,44 +216,37 @@ jobs:
       }}
     runs-on: macos-15-intel
     steps:
-      - name: Resolve inputs
-        id: vars
+      - name: Fetch ty/triomate source (crates/)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core from GitLab
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.vars.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "${{ needs.prepare-release.outputs.source_sha }}"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          git -C source rev-parse HEAD
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        # 注：tailos-core 自带 rust-toolchain.toml（锁 1.94.1），
-        # 在 source/ 内执行 cargo 时 rustup 会自动安装并使用该版本。
+        # 注：crates/ 自带 rust-toolchain.toml（锁 1.94.1），
+        # 在 source/crates 内执行 cargo 时 rustup 会自动安装并使用该版本。
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust-core
+          prefix-key: v2-rust-core
           key: ${{ runner.arch }}
           cache-bin: "false"
           workspaces: |
-            source -> target
+            source/crates -> target
 
       - name: Build runtime (mac x64)
-        working-directory: source
+        working-directory: source/crates
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release -p tailos-cli -p tailos-browser-host --bins --target x86_64-apple-darwin
+          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target x86_64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/x86_64-apple-darwin/release/tailos "$STAGE/"
@@ -204,19 +258,30 @@ jobs:
       - name: Package + checksum
         id: pkg
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-darwin-x64.tar.gz"
           tar -czf "$ASSET" -C stage .
           shasum -a 256 "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
+        if: needs.prepare-release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
             "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.prepare-release.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-darwin-x64
+          path: |
+            ${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.asset }}.sha256
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   build-core-mac-arm64:
@@ -228,24 +293,17 @@ jobs:
       }}
     runs-on: macos-latest
     steps:
-      - name: Resolve inputs
-        id: vars
+      - name: Fetch ty/triomate source (crates/)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core from GitLab
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.vars.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "${{ needs.prepare-release.outputs.source_sha }}"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          git -C source rev-parse HEAD
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -253,17 +311,17 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust-core
+          prefix-key: v2-rust-core
           key: ${{ runner.arch }}
           cache-bin: "false"
           workspaces: |
-            source -> target
+            source/crates -> target
 
       - name: Build runtime (mac arm64)
-        working-directory: source
+        working-directory: source/crates
         run: |
           rustup target add aarch64-apple-darwin
-          cargo build --release -p tailos-cli -p tailos-browser-host --bins --target aarch64-apple-darwin
+          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target aarch64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/aarch64-apple-darwin/release/tailos "$STAGE/"
@@ -275,19 +333,30 @@ jobs:
       - name: Package + checksum
         id: pkg
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-darwin-arm64.tar.gz"
           tar -czf "$ASSET" -C stage .
           shasum -a 256 "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
+        if: needs.prepare-release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
             "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.prepare-release.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-darwin-arm64
+          path: |
+            ${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.asset }}.sha256
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   build-core-linux-x64:
@@ -300,24 +369,17 @@ jobs:
     # 在较旧的发行版上构建，抬高 glibc 下限，让产物能覆盖更多桌面发行版。
     runs-on: ubuntu-22.04
     steps:
-      - name: Resolve inputs
-        id: vars
+      - name: Fetch ty/triomate source (crates/)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core from GitLab
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.vars.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "${{ needs.prepare-release.outputs.source_sha }}"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          git -C source rev-parse HEAD
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -325,16 +387,16 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust-core
+          prefix-key: v2-rust-core
           key: ${{ runner.arch }}
           cache-bin: "false"
           workspaces: |
-            source -> target
+            source/crates -> target
 
       - name: Build runtime (linux x64)
-        working-directory: source
+        working-directory: source/crates
         run: |
-          cargo build --release -p tailos-cli -p tailos-browser-host --bins
+          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/release/tailos "$STAGE/"
@@ -346,19 +408,30 @@ jobs:
       - name: Package + checksum
         id: pkg
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-linux-x64.tar.gz"
           tar -czf "$ASSET" -C stage .
           sha256sum "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
+        if: needs.prepare-release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
             "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.prepare-release.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-linux-x64
+          path: |
+            ${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.asset }}.sha256
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   build-core-linux-arm64:
@@ -372,24 +445,17 @@ jobs:
     # 与 linux-x64 job 一致地选用 22.04，把 glibc 下限压在 2.35。
     runs-on: ubuntu-22.04-arm
     steps:
-      - name: Resolve inputs
-        id: vars
+      - name: Fetch ty/triomate source (crates/)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core from GitLab
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.vars.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "${{ needs.prepare-release.outputs.source_sha }}"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          git -C source rev-parse HEAD
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -397,16 +463,16 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust-core
+          prefix-key: v2-rust-core
           key: ${{ runner.arch }}
           cache-bin: "false"
           workspaces: |
-            source -> target
+            source/crates -> target
 
       - name: Build runtime (linux arm64)
-        working-directory: source
+        working-directory: source/crates
         run: |
-          cargo build --release -p tailos-cli -p tailos-browser-host --bins
+          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/release/tailos "$STAGE/"
@@ -418,19 +484,30 @@ jobs:
       - name: Package + checksum
         id: pkg
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-linux-arm64.tar.gz"
           tar -czf "$ASSET" -C stage .
           sha256sum "$ASSET" | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
+        if: needs.prepare-release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
             "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.prepare-release.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-linux-arm64
+          path: |
+            ${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.asset }}.sha256
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   build-core-win:
@@ -442,26 +519,18 @@ jobs:
       }}
     runs-on: windows-latest
     steps:
-      - name: Resolve inputs
-        id: vars
+      - name: Fetch ty/triomate source (crates/)
         shell: bash
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          echo "version=${{ needs.prepare-release.outputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ github.event.client_payload.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Clone tailos-core from GitLab
-        shell: bash
-        run: |
-          REPO_URL="https://${{ secrets.GITLAB_CORE_TOKEN_USER }}:${{ secrets.GITLAB_CORE_TOKEN_PASS }}@${{ env.GITLAB_RUNTIME_REPO }}"
-          REF="${{ steps.vars.outputs.ref }}"
-          git clone "$REPO_URL" source
-          if [ -n "$REF" ]; then
-            git -C source checkout --detach "$REF"
-          fi
+          REPO_URL="https://${{ secrets.GITLAB_DEPLOY_TOKEN_USER }}:${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}@${{ env.GITLAB_SOURCE_REPO }}"
+          git init -q source
+          git -C source remote add origin "$REPO_URL"
+          git -C source fetch --depth 1 origin "${{ needs.prepare-release.outputs.source_sha }}"
+          git -C source sparse-checkout set "${{ env.RUNTIME_SUBDIR }}"
+          git -C source checkout -q --detach FETCH_HEAD
+          git -C source rev-parse HEAD
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -469,19 +538,20 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust-core
+          prefix-key: v2-rust-core
           key: ${{ runner.arch }}
           cache-bin: "false"
           workspaces: |
-            source -> target
+            source/crates -> target
 
+      # 注意：cargo 必须在 source/crates 内执行，crates/.cargo/config.toml 的 crt-static 设置按 cwd 向上查找。
       - name: Build runtime (win x64)
-        working-directory: source
+        working-directory: source/crates
         shell: bash
         run: |
           # 主 CLI 二进制
-          cargo build --release -p tailos-cli -p tailos-browser-host --bins
-          # Windows 沙箱辅助 bin（独立 package，不在主 workspace）
+          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
+          # Windows 沙箱辅助 bin（独立 package，不在主 workspace，没有自己的 Cargo.lock，不加 --locked）
           cargo build --release \
             --manifest-path vendor/codex-windows-sandbox/Cargo.toml \
             --target-dir target \
@@ -499,17 +569,28 @@ jobs:
         id: pkg
         shell: bash
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ASSET="tailos-runtime-${VERSION}-win32-x64.zip"
           ( cd stage && 7z a -tzip "../$ASSET" ./* )
           certutil -hashfile "$ASSET" SHA256 | sed -n '2p' | tr -d ' \r' | tee "${ASSET}.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
+        if: needs.prepare-release.outputs.publish == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ steps.vars.outputs.version }}" \
+          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
             "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.prepare-release.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-win32-x64
+          path: |
+            ${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.asset }}.sha256
+          if-no-files-found: error
