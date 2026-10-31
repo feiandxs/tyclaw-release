@@ -1,0 +1,148 @@
+# Candidate for feiandxs/tyclaw-release/.github/workflows/deploy-portal.yml.
+# Installing this file does not authorize a production run.
+name: Deploy Portal
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Separately approved production action
+        type: choice
+        required: true
+        options: [workloads, ingress, rollback-home]
+      sha:
+        description: Exact reviewed main commit in ty/triomate
+        required: true
+      portal_sha:
+        description: Reviewed Portal build source SHA
+        required: true
+      content_sha:
+        description: Reviewed Education build source SHA
+        required: true
+      expected_ingress_sha256:
+        description: Reviewed live ingress hash (required for ingress and rollback-home)
+        required: false
+      portal_image:
+        description: Portal immutable registry digest reference
+        required: true
+      content_image:
+        description: Education immutable registry digest reference
+        required: true
+concurrency:
+  group: deploy-portal-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/portal_key
+          chmod 600 ~/.ssh/portal_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Validate inputs and deploy prepared images
+        env:
+          PHASE: ${{ inputs.phase }}
+          SOURCE_SHA: ${{ inputs.sha }}
+          PORTAL_SHA: ${{ inputs.portal_sha }}
+          CONTENT_SHA: ${{ inputs.content_sha }}
+          EXPECTED_INGRESS: ${{ inputs.expected_ingress_sha256 }}
+          PORTAL_IMAGE: ${{ inputs.portal_image }}
+          CONTENT_IMAGE: ${{ inputs.content_image }}
+          DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+        run: |
+          set -eu
+          [[ "$PHASE" == workloads || "$PHASE" == ingress || "$PHASE" == rollback-home ]]
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PORTAL_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CONTENT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          if [[ "$PHASE" != workloads ]]; then [[ "$EXPECTED_INGRESS" =~ ^[a-f0-9]{64}$ ]]; fi
+          [[ "$PORTAL_IMAGE" =~ ^registry\.apexdata\.com\.cn/ty/triomate/portal@sha256:[a-f0-9]{64}$ ]]
+          [[ "$CONTENT_IMAGE" =~ ^registry\.apexdata\.com\.cn/ty/triomate/education@sha256:[a-f0-9]{64}$ ]]
+          [[ "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9_./-]+$ ]]
+          ssh -i ~/.ssh/portal_key -p "${DEPLOY_PORT:-22}" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash -s -- '$DEPLOY_PATH' '$SOURCE_SHA' '$PORTAL_IMAGE' '$CONTENT_IMAGE' '$PHASE' '$PORTAL_SHA' '$CONTENT_SHA' '$EXPECTED_INGRESS'" <<'REMOTE'
+          set -euo pipefail
+          test "$(hostname)" = master
+          repo=$1
+          sha=$2
+          portal=$3
+          content=$4
+          cd "$repo"
+          git fetch origin main
+          git cat-file -e "$sha^{commit}"
+          git merge-base --is-ancestor "$sha" origin/main
+          git merge-base --is-ancestor "$6" origin/main
+          git merge-base --is-ancestor "$7" origin/main
+          # Archive the reviewed tree without changing the checkout used by other deployments.
+          stage=$(mktemp -d)
+          trap 'rm -rf "$stage"' EXIT
+          git archive "$sha" deploy/portal | tar -x -C "$stage"
+          if [ "$5" != rollback-home ]; then
+            node "$stage/deploy/portal/coexist/verify-image.mjs" "$portal" "$6"
+            node "$stage/deploy/portal/coexist/verify-image.mjs" "$content" "$7"
+          fi
+          if [ "$5" = ingress ] || [ "$5" = rollback-home ]; then
+            candidate="$stage/www.triomate.ai.conf"
+            node "$stage/deploy/portal/coexist/render-nginx.mjs" production > "$candidate"
+            if [ "$5" = rollback-home ]; then
+              # Match the exact reviewed forward config before changing only the home upstream.
+              test "$(sha256sum "$candidate" | cut -d' ' -f1)" = "$8"
+              sed -i 's/location = \/ { proxy_pass http:\/\/127.0.0.1:8098; }/location = \/ { proxy_pass http:\/\/127.0.0.1:8083; }/' "$candidate"
+            else
+              curl --fail --silent --show-error http://127.0.0.1:8098/api/health
+              curl --fail --silent --show-error http://127.0.0.1:8099/health
+              test "$(sudo -n k3s kubectl -n portal get deployment portal -o jsonpath='{.spec.template.spec.containers[0].image}')" = "$portal"
+              test "$(sudo -n k3s kubectl -n agent-service get deployment portal-content -o jsonpath='{.spec.template.spec.containers[0].image}')" = "$content"
+            fi
+            curl --fail --silent --show-error -o /dev/null http://127.0.0.1:8083/
+            current=/etc/nginx/sites-enabled/www.triomate.ai.conf
+            backup="/etc/nginx/www.triomate.ai.before-portal-$sha-$(date +%s).conf"
+            sudo -n test -f "$current"
+            test "$(sudo -n sha256sum "$current" | cut -d' ' -f1)" = "$8"
+            sudo -n cp "$current" "$backup"
+            sudo -n install -m 644 "$candidate" "$current"
+            if ! sudo -n nginx -t; then
+              sudo -n cp "$backup" "$current"
+              exit 1
+            fi
+            if ! sudo -n systemctl reload nginx; then
+              sudo -n cp "$backup" "$current"
+              sudo -n nginx -t && sudo -n systemctl reload nginx
+              exit 1
+            fi
+            sudo -n sha256sum "$current"
+            printf 'Ingress source=%s Backup=%s\n' "$sha" "$backup"
+            exit 0
+          fi
+          # Import is a separate approved preparation action. imagePullPolicy: Never requires both here.
+          sudo -n k3s ctr -n k8s.io images ls -q | grep -Fx -- "$portal" >/dev/null
+          sudo -n k3s ctr -n k8s.io images ls -q | grep -Fx -- "$content" >/dev/null
+          sudo -n k3s kubectl -n agent-service get secret portal-content >/dev/null
+          sudo -n k3s kubectl -n portal get secret portal-web >/dev/null
+          node "$stage/deploy/portal/coexist/render-manifest.mjs" production "$portal" "$content" > "$stage/portal.yaml"
+          sudo -n k3s kubectl apply --dry-run=server -f "$stage/portal.yaml"
+          backup="/etc/rancher/k3s/manifests-manual/portal.before-$sha.yaml"
+          if sudo -n test -e /etc/rancher/k3s/manifests-manual/portal.yaml; then
+            sudo -n cp -n /etc/rancher/k3s/manifests-manual/portal.yaml "$backup"
+          fi
+          sudo -n install -m 600 "$stage/portal.yaml" /etc/rancher/k3s/manifests-manual/portal.yaml
+          sudo -n k3s kubectl apply -f /etc/rancher/k3s/manifests-manual/portal.yaml
+          sudo -n k3s kubectl -n agent-service rollout status deployment/portal-content --timeout=180s
+          sudo -n k3s kubectl -n portal rollout status deployment/portal --timeout=180s
+          curl --fail --silent --show-error http://127.0.0.1:8099/health
+          curl --fail --silent --show-error http://127.0.0.1:8098/api/health
+          sudo -n k3s kubectl -n portal get pods -o wide
+          sudo -n k3s kubectl -n agent-service get deployment portal-content -o wide
+          printf 'Reviewed source=%s\nPortal=%s\nContent=%s\n' "$sha" "$portal" "$content"
+          REMOTE
