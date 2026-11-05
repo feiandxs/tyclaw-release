@@ -205,10 +205,10 @@ jobs:
 
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
           # 首次迁移时镜像行是 docker.io/library/partner-console-partner-console:k3s-ba1ff509，按唯一的 image: 行替换
-          if [ -f "$MANIFEST" ] && [ "$(grep -cE '^[[:space:]]*image:' "$MANIFEST")" = "1" ]; then
+          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -cE '^[[:space:]]*image:' "$MANIFEST")" = "1" ]; then
             sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
             sudo -n sed -i -E "s#^([[:space:]]*image: *).*#\1${IMG}#" "$MANIFEST"
-            grep -nE '^[[:space:]]*image:' "$MANIFEST"
+            sudo -n grep -nE '^[[:space:]]*image:' "$MANIFEST"
           else
             echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
           fi

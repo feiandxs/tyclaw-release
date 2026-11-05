@@ -204,10 +204,10 @@ jobs:
           trap - ERR
 
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
-          if [ -f "$MANIFEST" ] && [ "$(grep -c 'triomate/web:' "$MANIFEST")" = "1" ]; then
+          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -c 'triomate/web:' "$MANIFEST")" = "1" ]; then
             sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
             sudo -n sed -i -E "s#(image: *\"?)registry\.apexdata\.com\.cn/ty/triomate/web:[^\" ]+#\1${IMG}#" "$MANIFEST"
-            grep -n 'triomate/web:' "$MANIFEST"
+            sudo -n grep -n 'triomate/web:' "$MANIFEST"
           else
             echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
           fi
