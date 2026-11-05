@@ -10,20 +10,19 @@ on:
       environment:
         description: "Deployment environment"
         required: true
-        default: "development"
+        default: "production"
         type: choice
         options:
-          - development
           - production
 
 concurrency:
-  group: deploy-knowledge-service-${{ github.event.inputs.environment || 'development' }}
+  group: deploy-knowledge-service-${{ github.event.inputs.environment || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'development' }}
+    environment: ${{ github.event.inputs.environment || 'production' }}
     steps:
       - name: Validate deploy inputs
         id: ref
@@ -40,7 +39,7 @@ jobs:
           fi
 
           case "$DEPLOY_ENVIRONMENT" in
-            development|production) ;;
+            production) ;;
             *)
               echo "Unsupported environment: $DEPLOY_ENVIRONMENT" >&2
               exit 1
@@ -105,53 +104,19 @@ jobs:
             "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
           set -euo pipefail
 
+          # 生产 knowledge-service 已迁 k3s（ty/triomate#3603）：不再执行任何 docker-compose 命令。
           if [ ! -d "$DEPLOY_PATH/.git" ]; then
             echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
             exit 1
           fi
-
-          if ! sudo -n docker version >/dev/null 2>&1; then
-            echo "sudo -n docker is required on the remote host" >&2
-            exit 1
-          fi
-          if ! sudo -n docker-compose version >/dev/null 2>&1; then
-            echo "sudo -n docker-compose is required on the remote host" >&2
-            exit 1
-          fi
-          if ! sudo -n docker network inspect api-gateway_default >/dev/null 2>&1; then
-            echo "Required Docker network is missing: api-gateway_default" >&2
-            exit 1
-          fi
-
-          cd "$DEPLOY_PATH"
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
-            git status --short
-            exit 1
-          fi
-
-          knowledge_env_file=""
-          for candidate in \
-            /data/home/ty-ai/services/knowledge-service/.env \
-            "$DEPLOY_PATH/deploy/api-gateway/.env" \
-            "$DEPLOY_PATH/apps/knowledge-service/.env"; do
-            if [ -f "$candidate" ] && grep -q '^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=.' "$candidate"; then
-              knowledge_env_file="$candidate"
-              break
+          for bin in docker k3s; do
+            if ! sudo -n "$bin" --version >/dev/null 2>&1; then
+              echo "sudo -n $bin is required on the remote host" >&2
+              exit 1
             fi
           done
-          if [ -z "$knowledge_env_file" ]; then
-            echo "KNOWLEDGE_SERVICE_INTERNAL_TOKEN is not set in any known host env file" >&2
-            exit 1
-          fi
-          knowledge_token="$(sed -n 's/^KNOWLEDGE_SERVICE_INTERNAL_TOKEN=//p' "$knowledge_env_file" | tail -n 1 | tr -d '\r')"
-          if [ -z "$knowledge_token" ]; then
-            echo "KNOWLEDGE_SERVICE_INTERNAL_TOKEN is missing in $knowledge_env_file" >&2
-            exit 1
-          fi
-          echo "Using Knowledge Service env file: $knowledge_env_file"
-          export KNOWLEDGE_SERVICE_INTERNAL_TOKEN="$knowledge_token"
 
+          cd "$DEPLOY_PATH"
           origin_url="$(git remote get-url origin)"
           case "$origin_url" in
             *gitlab.apexdata.com.cn*ty/tyclaw*)
@@ -159,13 +124,13 @@ jobs:
               ;;
           esac
 
-          git fetch --prune origin
           git fetch --depth 1 origin "$DEPLOY_SHA"
           if [ "$(git rev-parse FETCH_HEAD)" != "$DEPLOY_SHA" ]; then
             echo "Fetched commit does not match requested SHA" >&2
             exit 1
           fi
 
+          # 在独立 worktree 中构建，不动主检出
           worktree_path="${DEPLOY_PATH%/}.knowledge-service-deploy"
           if [ -e "$worktree_path" ]; then
             if git worktree list --porcelain | grep -Fxq "worktree $worktree_path"; then
@@ -178,110 +143,71 @@ jobs:
           git worktree prune
           git worktree add --detach "$worktree_path" "$DEPLOY_SHA"
           cd "$worktree_path"
-
-          if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ]; then
-            echo "Deploy worktree is not at requested SHA" >&2
-            exit 1
-          fi
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Deploy worktree is not clean: $worktree_path" >&2
+          if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ] || [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy worktree is not clean at requested SHA" >&2
             exit 1
           fi
 
-          compose() {
-            sudo -n docker-compose \
-              --env-file "$knowledge_env_file" \
-              -p knowledge-service \
-              -f apps/knowledge-service/docker-compose.yml \
-              -f apps/knowledge-service/docker-compose.gateway.yml \
-              "$@"
-          }
+          NS=knowledge
+          DEPLOY=knowledge-service
+          IMG="registry.apexdata.com.cn/ty/triomate/knowledge-service:linux-amd64-${DEPLOY_SHA}"
+          MANIFEST=/etc/rancher/k3s/manifests-manual/knowledge.yaml
+          PREV_IMG="$(sudo -n k3s kubectl -n "$NS" get deploy/"$DEPLOY" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          echo "Current image: $PREV_IMG"
+          echo "Target image:  $IMG"
 
-          health_check() {
-            local health_ok=false
-            for attempt in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:3207/health >/dev/null; then
-                echo "Health check passed on attempt $attempt"
-                health_ok=true
-                break
-              fi
-              echo "Health check attempt $attempt/30 failed, waiting 2s..."
-              sleep 2
-            done
-            [ "$health_ok" = "true" ]
-          }
-
-          old_container="$(compose ps -q knowledge-service || true)"
-          old_image=""
-          rollback_tag=""
-          if [ -n "$old_container" ]; then
-            old_image="$(sudo -n docker inspect --format '{{.Image}}' "$old_container")"
-            rollback_tag="tailos-knowledge-service:rollback-$(date -u +%Y%m%d%H%M%S)"
-            sudo -n docker tag "$old_image" "$rollback_tag"
-            echo "Rollback image: $rollback_tag ($old_image)"
-          else
-            echo "No previous Knowledge Service container found"
-          fi
-
-          rollback_armed=false
-          rollback() {
-            local status=$?
-            trap - ERR
-            compose logs --tail=200 knowledge-service || true
-
-            if [ "$rollback_armed" = "true" ] && [ -n "$old_image" ]; then
-              echo "Deployment failed; restoring $rollback_tag"
-              sudo -n docker tag "$old_image" tailos-knowledge-service:local
-              compose up -d --no-build --force-recreate
-              if ! health_check; then
-                echo "Rollback container did not become healthy" >&2
-              fi
-            else
-              echo "Deployment failed before replacement, or no rollback image exists" >&2
-            fi
-            exit "$status"
-          }
-          trap rollback ERR
-
-          candidate_image="tailos-knowledge-service:$DEPLOY_SHA"
+          # 生产机解析不了 registry.apexdata.com.cn，本机构建后导入 k3s containerd
           sudo -n docker build \
             --network=host \
             --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
             -f apps/knowledge-service/Dockerfile \
-            -t "$candidate_image" \
+            -t "$IMG" \
             .
-          candidate_id="$(sudo -n docker image inspect --format '{{.Id}}' "$candidate_image")"
-          echo "Candidate image: $candidate_image ($candidate_id)"
+          sudo -n docker save "$IMG" | sudo -n k3s ctr -n k8s.io images import -
+          sudo -n k3s ctr -n k8s.io images ls -q | grep -qxF "$IMG"
 
-          sudo -n docker tag "$candidate_image" tailos-knowledge-service:local
-          rollback_armed=true
-          compose up -d --no-build --force-recreate
+          health_check() {
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error http://127.0.0.1:3207/health >/dev/null; then
+                echo "Health check passed on attempt $attempt"
+                return 0
+              fi
+              echo "Health check attempt $attempt/30 failed, waiting 2s..."
+              sleep 2
+            done
+            return 1
+          }
+
+          rollback() {
+            local status=$?
+            trap - ERR
+            sudo -n k3s kubectl -n "$NS" logs deploy/"$DEPLOY" --tail=200 || true
+            echo "Deployment failed; rolling back to $PREV_IMG" >&2
+            sudo -n k3s kubectl -n "$NS" rollout undo deploy/"$DEPLOY" || true
+            sudo -n k3s kubectl -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s || true
+            exit "$status"
+          }
+          trap rollback ERR
+
+          sudo -n k3s kubectl -n "$NS" set image deploy/"$DEPLOY" knowledge-service="$IMG"
+          sudo -n k3s kubectl -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s
           health_check
 
-          container_id="$(compose ps -q knowledge-service)"
-          running_image="$(sudo -n docker inspect --format '{{.Image}}' "$container_id")"
-          if [ "$running_image" != "$candidate_id" ]; then
-            echo "Running image $running_image does not match candidate $candidate_id" >&2
-            exit 1
+          # 只允许监听回环地址（LISTEN_HOST=127.0.0.1）
+          listeners="$(ss -ltnH 'sport = :3207' | awk '{print $4}')"
+          echo "Listeners on 3207: $listeners"
+          if printf '%s\n' "$listeners" | grep -vqE '^127\.0\.0\.1:3207$'; then
+            echo "knowledge-service listens on a non-loopback address" >&2
+            false
           fi
 
-          data_mount="$(sudo -n docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}' "$container_id")"
-          if [ -z "$data_mount" ]; then
-            echo "Knowledge Service container has no /data mount" >&2
-            exit 1
-          fi
-          if ! sudo -n docker inspect --format '{{json .NetworkSettings.Networks}}' "$container_id" | grep -q 'api-gateway_default'; then
-            echo "Knowledge Service is not attached to api-gateway_default" >&2
-            exit 1
-          fi
-
-          unauth_status="$(curl --silent --output /tmp/ks-unauth-smoke.json --write-out '%{http_code}' \
-            http://127.0.0.1:3207/documents || true)"
+          unauth_status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3207/documents || true)"
           if [ "$unauth_status" != "401" ]; then
             echo "Unauthenticated documents should return 401, got $unauth_status" >&2
-            exit 1
+            false
           fi
 
+          knowledge_token="$(sudo -n k3s kubectl -n "$NS" get secret knowledge-env -o jsonpath='{.data.KNOWLEDGE_SERVICE_INTERNAL_TOKEN}' | base64 -d)"
           smoke_response="$(curl --fail --silent --show-error --get \
             -H "Authorization: Bearer $knowledge_token" \
             -H 'X-Knowledge-Tenant-Id: __knowledge_deploy_smoke__' \
@@ -289,18 +215,22 @@ jobs:
             --data-urlencode 'collection=__knowledge_deploy_smoke__' \
             --data-urlencode 'limit=1' \
             http://127.0.0.1:3207/search)"
+          unset knowledge_token
           if ! printf '%s' "$smoke_response" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
             echo "Knowledge search smoke returned an unexpected response" >&2
-            exit 1
+            false
           fi
-
-          rollback_armed=false
           trap - ERR
-          echo "Deploy worktree SHA: $(git rev-parse HEAD)"
-          echo "Running container: $container_id"
-          echo "Running image: $running_image"
-          echo "Persistent /data mount: $data_mount"
-          compose ps
+
+          # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
+          if [ -f "$MANIFEST" ] && [ "$(grep -c 'triomate/knowledge-service:' "$MANIFEST")" = "1" ]; then
+            sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
+            sudo -n sed -i -E "s#(image: *\"?)registry\.apexdata\.com\.cn/ty/triomate/knowledge-service:[^\" ]+#\1${IMG}#" "$MANIFEST"
+            grep -n 'triomate/knowledge-service:' "$MANIFEST"
+          else
+            echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
+          fi
+          sudo -n k3s kubectl -n "$NS" get pods -o wide
           EOF
 
       - name: Summarize deployment
@@ -310,11 +240,11 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ steps.ref.outputs.environment }}
         run: |
           {
-            echo "## Knowledge Service deployment"
+            echo "## Knowledge Service deployment (k3s)"
             echo
             echo "- Environment: \`$DEPLOY_ENVIRONMENT\`"
             echo "- GitLab SHA: \`$DEPLOY_SHA\`"
-            echo "- Health: passed"
+            echo "- Health: passed; listens on 127.0.0.1:3207 only"
             echo "- Unauthenticated documents: 401"
             echo "- Authenticated search smoke: passed"
           } >> "$GITHUB_STEP_SUMMARY"
