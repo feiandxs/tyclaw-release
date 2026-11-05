@@ -18,7 +18,6 @@ on:
         type: choice
         options:
           - production
-          - development
 
 concurrency:
   group: deploy-api-${{ github.event.inputs.environment || 'production' }}
@@ -110,15 +109,18 @@ jobs:
 
           cd "$DEPLOY_PATH"
 
-          if ! sudo -n docker-compose version >/dev/null 2>&1; then
-            echo "sudo -n docker-compose is required on the remote host" >&2
-            exit 1
-          fi
+          # 生产 api-gateway 已迁 k3s（ty/triomate#3599、#3601）：不再执行任何 docker-compose 命令，不碰 pg。
+          for bin in docker k3s; do
+            if ! sudo -n "$bin" --version >/dev/null 2>&1; then
+              echo "sudo -n $bin is required on the remote host" >&2
+              exit 1
+            fi
+          done
 
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Deploy path is not clean: $DEPLOY_PATH" >&2
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "Deploy path has tracked local changes: $DEPLOY_PATH" >&2
             echo "Refusing to deploy over a dirty working tree." >&2
-            git status --short
+            git status --short --untracked-files=no
             exit 1
           fi
 
@@ -129,24 +131,40 @@ jobs:
               ;;
           esac
 
-          git fetch --prune origin
-
           if [ -n "$DEPLOY_SHA" ]; then
             echo "Deploying exact SHA: $DEPLOY_SHA"
             git fetch --depth 1 origin "$DEPLOY_SHA"
-            git checkout --detach FETCH_HEAD
           else
             echo "Deploying branch head: $DEPLOY_BRANCH"
             git fetch --depth 1 origin "$DEPLOY_BRANCH"
-            git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
           fi
+          git checkout --detach FETCH_HEAD
+          SHA="$(git rev-parse HEAD)"
 
-          sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env up -d --build
-          sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env ps
+          NS=api-gateway
+          IMG="registry.apexdata.com.cn/ty/triomate/api-gateway:linux-amd64-${SHA}"
+          MANIFEST=/etc/rancher/k3s/manifests-manual/api-gateway.yaml
+          PREV_IMG="$(sudo -n k3s kubectl -n "$NS" get deploy/api-gateway -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          echo "Current image: $PREV_IMG"
+          echo "Target image:  $IMG"
+
+          # 生产机解析不了 registry.apexdata.com.cn，只能本机构建后导入 k3s containerd
+          sudo -n docker build -f deploy/api-gateway/api-gateway.dockerfile -t "$IMG" .
+          sudo -n docker save "$IMG" | sudo -n k3s ctr -n k8s.io images import -
+          sudo -n k3s ctr -n k8s.io images ls -q | grep -qxF "$IMG"
+
+          sudo -n k3s kubectl -n "$NS" set image deploy/api-gateway api-gateway="$IMG"
+          if ! sudo -n k3s kubectl -n "$NS" rollout status deploy/api-gateway --timeout=300s; then
+            sudo -n k3s kubectl -n "$NS" logs deploy/api-gateway --tail=200 || true
+            echo "Rollout failed; rolling back to $PREV_IMG" >&2
+            sudo -n k3s kubectl -n "$NS" rollout undo deploy/api-gateway
+            sudo -n k3s kubectl -n "$NS" rollout status deploy/api-gateway --timeout=300s || true
+            exit 1
+          fi
 
           health_ok=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:8082/health; then
+            if curl --fail --silent --show-error http://127.0.0.1:8182/health; then
               echo
               echo "Health check passed on attempt $attempt"
               health_ok=true
@@ -158,7 +176,16 @@ jobs:
           done
 
           if [ "$health_ok" != "true" ]; then
-            sudo -n docker-compose -f deploy/api-gateway/docker-compose.yml --env-file deploy/api-gateway/.env logs --tail=200 api-gateway
+            sudo -n k3s kubectl -n "$NS" logs deploy/api-gateway --tail=200 || true
             exit 1
+          fi
+
+          # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
+          if [ -f "$MANIFEST" ] && [ "$(grep -c 'triomate/api-gateway:' "$MANIFEST")" = "1" ]; then
+            sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
+            sudo -n sed -i -E "s#(image: *\"?)registry\.apexdata\.com\.cn/ty/triomate/api-gateway:[^\" ]+#\1${IMG}#" "$MANIFEST"
+            grep -n 'triomate/api-gateway:' "$MANIFEST"
+          else
+            echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
           fi
           EOF
