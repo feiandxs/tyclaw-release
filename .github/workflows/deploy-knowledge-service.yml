@@ -227,8 +227,14 @@ jobs:
             sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
             sudo -n sed -i -E "s#(image: *\"?)registry\.apexdata\.com\.cn/ty/triomate/knowledge-service:[^\" ]+#\1${IMG}#" "$MANIFEST"
             sudo -n grep -n 'triomate/knowledge-service:' "$MANIFEST"
+            if [ "$(sudo -n grep -cF "$IMG" "$MANIFEST")" != "1" ]; then
+              echo "ERROR: $MANIFEST image line was not updated to $IMG" >&2
+              exit 1
+            fi
           else
-            echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
+            # 服务已发布并验证通过，这里只让 job 失败标红，不回退
+            echo "ERROR: $MANIFEST not updated (missing, unreadable or unexpected image lines); service is deployed, fix manifest drift by hand" >&2
+            exit 1
           fi
           sudo -n k3s kubectl -n "$NS" get pods -o wide
           EOF
