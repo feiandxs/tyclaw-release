@@ -1,0 +1,230 @@
+name: Deploy Partner Console
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-character GitLab commit SHA to deploy"
+        required: true
+        type: string
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: deploy-partner-console-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Validate deploy inputs
+        id: ref
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ github.event.inputs.sha }}
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sha must be a full 40-character lowercase Git commit SHA" >&2
+            exit 1
+          fi
+
+          case "$DEPLOY_ENVIRONMENT" in
+            production) ;;
+            *)
+              echo "Unsupported environment: $DEPLOY_ENVIRONMENT" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+          echo "environment=$DEPLOY_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Deploy SHA: $DEPLOY_SHA"
+          echo "Deploy environment: $DEPLOY_ENVIRONMENT"
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          for name in API_DEPLOY_HOST API_DEPLOY_USER API_DEPLOY_PATH API_DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Prepare SSH client
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_SSH_KEY: ${{ secrets.API_DEPLOY_SSH_KEY }}
+          API_DEPLOY_KNOWN_HOSTS: ${{ secrets.API_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$API_DEPLOY_SSH_KEY" > ~/.ssh/api_deploy_key
+          chmod 600 ~/.ssh/api_deploy_key
+
+          if [ -n "$API_DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$API_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${API_DEPLOY_PORT:-22}" "$API_DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy Partner Console on remote host
+        shell: bash
+        env:
+          API_DEPLOY_HOST: ${{ secrets.API_DEPLOY_HOST }}
+          API_DEPLOY_PORT: ${{ secrets.API_DEPLOY_PORT }}
+          API_DEPLOY_USER: ${{ secrets.API_DEPLOY_USER }}
+          API_DEPLOY_PATH: ${{ secrets.API_DEPLOY_PATH }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i ~/.ssh/api_deploy_key \
+            -p "${API_DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            "${API_DEPLOY_USER}@${API_DEPLOY_HOST}" \
+            "DEPLOY_PATH='${API_DEPLOY_PATH}' DEPLOY_SHA='${DEPLOY_SHA}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          # 生产 partner-console 已迁 k3s（ty/triomate#3607）：不再执行任何 docker-compose 命令。
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
+            exit 1
+          fi
+          for bin in docker k3s; do
+            if ! sudo -n "$bin" --version >/dev/null 2>&1; then
+              echo "sudo -n $bin is required on the remote host" >&2
+              exit 1
+            fi
+          done
+
+          cd "$DEPLOY_PATH"
+          origin_url="$(git remote get-url origin)"
+          case "$origin_url" in
+            *gitlab.apexdata.com.cn*ty/tyclaw*)
+              git remote set-url origin "${origin_url/ty\/tyclaw/ty\/triomate}"
+              ;;
+          esac
+
+          git fetch --depth 1 origin "$DEPLOY_SHA"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$DEPLOY_SHA" ]; then
+            echo "Fetched commit does not match requested SHA" >&2
+            exit 1
+          fi
+
+          # 在独立 worktree 中构建，不动主检出
+          worktree_path="${DEPLOY_PATH%/}.partner-console-deploy"
+          if [ -e "$worktree_path" ]; then
+            if git worktree list --porcelain | grep -Fxq "worktree $worktree_path"; then
+              git worktree remove --force "$worktree_path"
+            else
+              echo "Refusing to replace unregistered path: $worktree_path" >&2
+              exit 1
+            fi
+          fi
+          git worktree prune
+          git worktree add --detach "$worktree_path" "$DEPLOY_SHA"
+          cd "$worktree_path"
+          if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ] || [ -n "$(git status --porcelain)" ]; then
+            echo "Deploy worktree is not clean at requested SHA" >&2
+            exit 1
+          fi
+
+          NS=partner-console
+          DEPLOY=partner-console
+          IMG="registry.apexdata.com.cn/ty/triomate/partner-console:linux-amd64-${DEPLOY_SHA}"
+          MANIFEST=/etc/rancher/k3s/manifests-manual/partner-console.yaml
+          PREV_IMG="$(sudo -n k3s kubectl -n "$NS" get deploy/"$DEPLOY" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          echo "Current image: $PREV_IMG"
+          echo "Target image:  $IMG"
+
+          # 生产机解析不了 registry.apexdata.com.cn，本机构建后导入 k3s containerd
+          sudo -n docker build \
+            --network=host \
+            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
+            -f deploy/partner-console/partner-console.dockerfile \
+            -t "$IMG" \
+            .
+          sudo -n docker save "$IMG" | sudo -n k3s ctr -n k8s.io images import -
+          sudo -n k3s ctr -n k8s.io images ls -q | grep -qxF "$IMG"
+
+          health_check() {
+            for attempt in $(seq 1 30); do
+              code="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8087/login || true)"
+              if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ]; then
+                echo "Health check passed on attempt $attempt"
+                return 0
+              fi
+              echo "Health check attempt $attempt/30 failed, waiting 2s..."
+              sleep 2
+            done
+            return 1
+          }
+
+          rollback() {
+            local status=$?
+            trap - ERR
+            sudo -n k3s kubectl -n "$NS" logs deploy/"$DEPLOY" --tail=200 || true
+            echo "Deployment failed; rolling back to $PREV_IMG" >&2
+            sudo -n k3s kubectl -n "$NS" rollout undo deploy/"$DEPLOY" || true
+            sudo -n k3s kubectl -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s || true
+            exit "$status"
+          }
+          trap rollback ERR
+
+          sudo -n k3s kubectl -n "$NS" set image deploy/"$DEPLOY" partner-console="$IMG"
+          sudo -n k3s kubectl -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s
+          health_check
+
+          # 只允许监听回环地址（清单 args: pnpm start -H 127.0.0.1）
+          listeners="$(ss -ltnH 'sport = :8087' | awk '{print $4}')"
+          echo "Listeners on 8087: $listeners"
+          if [ -z "$listeners" ] || printf '%s\n' "$listeners" | grep -vqE '^127\.0\.0\.1:8087$'; then
+            echo "partner-console listens on a non-loopback address (or not at all)" >&2
+            false
+          fi
+          trap - ERR
+
+          # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
+          # 首次迁移时镜像行是 docker.io/library/partner-console-partner-console:k3s-ba1ff509，按唯一的 image: 行替换
+          if [ -f "$MANIFEST" ] && [ "$(grep -cE '^[[:space:]]*image:' "$MANIFEST")" = "1" ]; then
+            sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
+            sudo -n sed -i -E "s#^([[:space:]]*image: *).*#\1${IMG}#" "$MANIFEST"
+            grep -nE '^[[:space:]]*image:' "$MANIFEST"
+          else
+            echo "WARN: $MANIFEST not updated (missing or unexpected image lines)" >&2
+          fi
+          sudo -n k3s kubectl -n "$NS" get pods -o wide
+          EOF
+
+      - name: Summarize deployment
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+          DEPLOY_ENVIRONMENT: ${{ steps.ref.outputs.environment }}
+        run: |
+          {
+            echo "## Partner Console deployment (k3s)"
+            echo
+            echo "- Environment: \`$DEPLOY_ENVIRONMENT\`"
+            echo "- GitLab SHA: \`$DEPLOY_SHA\`"
+            echo "- Health: /login < 500; listens on 127.0.0.1:8087 only"
+          } >> "$GITHUB_STEP_SUMMARY"
