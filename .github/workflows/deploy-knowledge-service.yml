@@ -201,6 +201,7 @@ jobs:
           fi
           trap - ERR
 
+          sudo -n k3s kubectl -n "$NS" annotate deploy/"$DEPLOY" --overwrite triomate.ai/source-sha="$DEPLOY_SHA" kubernetes.io/change-cause="tyclaw-release deploy-knowledge-service sha=$DEPLOY_SHA (ty/triomate#3680)"
           sudo -n /usr/local/sbin/harbor-run-tag prod "$DEPLOY" "$IMG" || echo "::warning::harbor-run-tag failed for $DEPLOY; run/prev tags not updated"
 
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
