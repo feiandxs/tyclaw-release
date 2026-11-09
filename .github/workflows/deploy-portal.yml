@@ -67,8 +67,8 @@ jobs:
           [[ "$PORTAL_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CONTENT_SHA" =~ ^[a-f0-9]{40}$ ]]
           if [[ "$PHASE" != workloads ]]; then [[ "$EXPECTED_INGRESS" =~ ^[a-f0-9]{64}$ ]]; fi
-          [[ "$PORTAL_IMAGE" =~ ^registry\.apexdata\.com\.cn/ty/triomate/portal@sha256:[a-f0-9]{64}$ ]]
-          [[ "$CONTENT_IMAGE" =~ ^registry\.apexdata\.com\.cn/ty/triomate/education@sha256:[a-f0-9]{64}$ ]]
+          [[ "$PORTAL_IMAGE" =~ ^(registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/portal@sha256:[a-f0-9]{64}$ ]]
+          [[ "$CONTENT_IMAGE" =~ ^(registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/education@sha256:[a-f0-9]{64}$ ]]
           [[ "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9_./-]+$ ]]
           ssh -i ~/.ssh/portal_key -p "${DEPLOY_PORT:-22}" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
             "bash -s -- '$DEPLOY_PATH' '$SOURCE_SHA' '$PORTAL_IMAGE' '$CONTENT_IMAGE' '$PHASE' '$PORTAL_SHA' '$CONTENT_SHA' '$EXPECTED_INGRESS'" <<'REMOTE'
@@ -125,9 +125,21 @@ jobs:
             printf 'Ingress source=%s Backup=%s\n' "$sha" "$backup"
             exit 0
           fi
-          # Import is a separate approved preparation action. imagePullPolicy: Never requires both here.
-          sudo -n k3s ctr -n k8s.io images ls -q | grep -Fx -- "$portal" >/dev/null
-          sudo -n k3s ctr -n k8s.io images ls -q | grep -Fx -- "$content" >/dev/null
+          # Harbor references are pulled through k3s; legacy GitLab references must already be present.
+          ensure_image() {
+            ref=$1
+            case "$ref" in
+              100.64.0.8:8443/triomate/*)
+                sudo -n k3s crictl pull "$ref"
+                sudo -n k3s crictl inspecti "$ref" >/dev/null
+                ;;
+              *)
+                sudo -n k3s ctr -n k8s.io images ls -q | grep -Fx -- "$ref" >/dev/null
+                ;;
+            esac
+          }
+          ensure_image "$portal"
+          ensure_image "$content"
           sudo -n k3s kubectl -n agent-service get secret portal-content >/dev/null
           sudo -n k3s kubectl -n portal get secret portal-web >/dev/null
           node "$stage/deploy/portal/coexist/render-manifest.mjs" production "$portal" "$content" > "$stage/portal.yaml"
