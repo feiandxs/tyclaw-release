@@ -141,7 +141,15 @@ jobs:
             echo "ERROR: image $IMG is unavailable; run the GitLab partner-console:publish-amd64 job for SHA $DEPLOY_SHA first" >&2
             exit 1
           fi
-          sudo -n k3s crictl inspecti "$IMG" >/dev/null
+          # 生产 Deployment 一律按 digest 固定（ty/triomate#3673、#3680）：Harbor tag 可移动，tag 引用不可靠。
+          IMG_REPO="${IMG%:*}"
+          IMG_DIGEST="$(sudo -n k3s crictl inspecti -o json "$IMG" | jq -r --arg p "${IMG_REPO}@sha256:" '[.status.repoDigests[] | select(startswith($p))] | if length == 1 then .[0] else empty end')"
+          if ! [[ "$IMG_DIGEST" =~ ^${IMG_REPO//./\\.}@sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: cannot resolve a unique Harbor digest for $IMG" >&2
+            exit 1
+          fi
+          echo "Resolved $IMG -> $IMG_DIGEST"
+          IMG="$IMG_DIGEST"
 
           health_check() {
             for attempt in $(seq 1 30); do
