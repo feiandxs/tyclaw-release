@@ -182,6 +182,8 @@ jobs:
             exit 1
           fi
 
+          sudo -n /usr/local/sbin/harbor-run-tag prod api-gateway "$IMG" || echo "::warning::harbor-run-tag failed for api-gateway; run/prev tags not updated"
+
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
           image_pattern='(registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/api-gateway(:[^"[:space:]]+|@sha256:[[:xdigit:]]{64})'
           if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -cE "$image_pattern" "$MANIFEST")" = "1" ]; then

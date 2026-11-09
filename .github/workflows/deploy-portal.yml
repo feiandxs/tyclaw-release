@@ -154,6 +154,18 @@ jobs:
           sudo -n k3s kubectl -n portal rollout status deployment/portal --timeout=180s
           curl --fail --silent --show-error http://127.0.0.1:8099/health
           curl --fail --silent --show-error http://127.0.0.1:8098/api/health
+          case "$portal" in
+            100.64.0.8:8443/triomate/*)
+              sudo -n /usr/local/sbin/harbor-run-tag prod portal "$portal" || echo "::warning::harbor-run-tag failed for portal; run/prev tags not updated"
+              ;;
+            *) echo "Skipping harbor-run-tag for portal: historical GitLab image ref" ;;
+          esac
+          case "$content" in
+            100.64.0.8:8443/triomate/*)
+              sudo -n /usr/local/sbin/harbor-run-tag prod portal-content "$content" || echo "::warning::harbor-run-tag failed for portal-content; run/prev tags not updated"
+              ;;
+            *) echo "Skipping harbor-run-tag for portal-content: historical GitLab image ref" ;;
+          esac
           sudo -n k3s kubectl -n portal get pods -o wide
           sudo -n k3s kubectl -n agent-service get deployment portal-content -o wide
           printf 'Reviewed source=%s\nPortal=%s\nContent=%s\n' "$sha" "$portal" "$content"
