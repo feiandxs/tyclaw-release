@@ -110,12 +110,10 @@ jobs:
           cd "$DEPLOY_PATH"
 
           # 生产 api-gateway 已迁 k3s（ty/triomate#3599、#3601）：不再执行任何 docker-compose 命令，不碰 pg。
-          for bin in docker k3s; do
-            if ! sudo -n "$bin" --version >/dev/null 2>&1; then
-              echo "sudo -n $bin is required on the remote host" >&2
-              exit 1
-            fi
-          done
+          if ! sudo -n k3s --version >/dev/null 2>&1; then
+            echo "sudo -n k3s is required on the remote host" >&2
+            exit 1
+          fi
 
           if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
             echo "Deploy path has tracked local changes: $DEPLOY_PATH" >&2
@@ -142,17 +140,21 @@ jobs:
           SHA="$(git rev-parse HEAD)"
 
           NS=api-gateway
-          IMG="registry.apexdata.com.cn/ty/triomate/api-gateway:linux-amd64-${SHA}"
+          IMG="100.64.0.8:8443/triomate/api-gateway:linux-amd64-${SHA}"
           MANIFEST=/etc/rancher/k3s/manifests-manual/api-gateway.yaml
           PREV_IMG="$(sudo -n k3s kubectl -n "$NS" get deploy/api-gateway -o jsonpath='{.spec.template.spec.containers[0].image}')"
           echo "Current image: $PREV_IMG"
           echo "Target image:  $IMG"
 
-          # 生产机解析不了 registry.apexdata.com.cn，只能本机构建后导入 k3s containerd
-          sudo -n docker build -f deploy/api-gateway/api-gateway.dockerfile -t "$IMG" .
-          sudo -n docker save "$IMG" | sudo -n k3s ctr -n k8s.io images import -
-          sudo -n k3s ctr -n k8s.io images ls -q | grep -qxF "$IMG"
+          # 生产机通过 k3s 配置的 Harbor 镜像源拉取 GitLab CI 构建产物
+          if ! sudo -n k3s crictl pull "$IMG"; then
+            echo "ERROR: image $IMG is unavailable; run the GitLab api-gateway:publish-amd64 job for SHA $SHA first" >&2
+            exit 1
+          fi
+          sudo -n k3s crictl inspecti "$IMG" >/dev/null
 
+          sudo -n k3s kubectl -n "$NS" patch deploy/api-gateway --type=strategic \
+            -p '{"spec":{"template":{"spec":{"containers":[{"name":"api-gateway","imagePullPolicy":"IfNotPresent"}]}}}}'
           sudo -n k3s kubectl -n "$NS" set image deploy/api-gateway api-gateway="$IMG"
           if ! sudo -n k3s kubectl -n "$NS" rollout status deploy/api-gateway --timeout=300s; then
             sudo -n k3s kubectl -n "$NS" logs deploy/api-gateway --tail=200 || true
@@ -181,10 +183,12 @@ jobs:
           fi
 
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
-          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -c 'triomate/api-gateway:' "$MANIFEST")" = "1" ]; then
+          image_pattern='(registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/api-gateway(:[^"[:space:]]+|@sha256:[[:xdigit:]]{64})'
+          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -cE "$image_pattern" "$MANIFEST")" = "1" ]; then
             sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
-            sudo -n sed -i -E "s#(image: *\"?)registry\.apexdata\.com\.cn/ty/triomate/api-gateway:[^\" ]+#\1${IMG}#" "$MANIFEST"
-            sudo -n grep -n 'triomate/api-gateway:' "$MANIFEST"
+            sudo -n sed -i -E "s#(image: *\"?)(registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/api-gateway(:[^\"[:space:]]+|@sha256:[[:xdigit:]]{64})#\1${IMG}#" "$MANIFEST"
+            sudo -n sed -i -E "/^[[:space:]]*image: .*triomate\/api-gateway(:|@)/,/^[[:space:]]*image:/ s#^([[:space:]]*imagePullPolicy: *)Never#\1IfNotPresent#" "$MANIFEST"
+            sudo -n grep -nE 'triomate/api-gateway(:|@)' "$MANIFEST"
             if [ "$(sudo -n grep -cF "$IMG" "$MANIFEST")" != "1" ]; then
               echo "ERROR: $MANIFEST image line was not updated to $IMG" >&2
               exit 1

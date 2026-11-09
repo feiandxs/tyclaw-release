@@ -109,12 +109,10 @@ jobs:
             echo "Deploy path does not contain a git checkout: $DEPLOY_PATH" >&2
             exit 1
           fi
-          for bin in docker k3s; do
-            if ! sudo -n "$bin" --version >/dev/null 2>&1; then
-              echo "sudo -n $bin is required on the remote host" >&2
-              exit 1
-            fi
-          done
+          if ! sudo -n k3s --version >/dev/null 2>&1; then
+            echo "sudo -n k3s is required on the remote host" >&2
+            exit 1
+          fi
 
           cd "$DEPLOY_PATH"
           origin_url="$(git remote get-url origin)"
@@ -130,41 +128,20 @@ jobs:
             exit 1
           fi
 
-          # 在独立 worktree 中构建，不动主检出
-          worktree_path="${DEPLOY_PATH%/}.partner-console-deploy"
-          if [ -e "$worktree_path" ]; then
-            if git worktree list --porcelain | grep -Fxq "worktree $worktree_path"; then
-              git worktree remove --force "$worktree_path"
-            else
-              echo "Refusing to replace unregistered path: $worktree_path" >&2
-              exit 1
-            fi
-          fi
-          git worktree prune
-          git worktree add --detach "$worktree_path" "$DEPLOY_SHA"
-          cd "$worktree_path"
-          if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ] || [ -n "$(git status --porcelain)" ]; then
-            echo "Deploy worktree is not clean at requested SHA" >&2
-            exit 1
-          fi
-
           NS=partner-console
           DEPLOY=partner-console
-          IMG="registry.apexdata.com.cn/ty/triomate/partner-console:linux-amd64-${DEPLOY_SHA}"
+          IMG="100.64.0.8:8443/triomate/partner-console:linux-amd64-${DEPLOY_SHA}"
           MANIFEST=/etc/rancher/k3s/manifests-manual/partner-console.yaml
           PREV_IMG="$(sudo -n k3s kubectl -n "$NS" get deploy/"$DEPLOY" -o jsonpath='{.spec.template.spec.containers[0].image}')"
           echo "Current image: $PREV_IMG"
           echo "Target image:  $IMG"
 
-          # 生产机解析不了 registry.apexdata.com.cn，本机构建后导入 k3s containerd
-          sudo -n docker build \
-            --network=host \
-            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
-            -f deploy/partner-console/partner-console.dockerfile \
-            -t "$IMG" \
-            .
-          sudo -n docker save "$IMG" | sudo -n k3s ctr -n k8s.io images import -
-          sudo -n k3s ctr -n k8s.io images ls -q | grep -qxF "$IMG"
+          # 生产机通过 k3s 配置的 Harbor 镜像源拉取 GitLab CI 构建产物
+          if ! sudo -n k3s crictl pull "$IMG"; then
+            echo "ERROR: image $IMG is unavailable; run the GitLab partner-console:publish-amd64 job for SHA $DEPLOY_SHA first" >&2
+            exit 1
+          fi
+          sudo -n k3s crictl inspecti "$IMG" >/dev/null
 
           health_check() {
             for attempt in $(seq 1 30); do
@@ -190,6 +167,8 @@ jobs:
           }
           trap rollback ERR
 
+          sudo -n k3s kubectl -n "$NS" patch deploy/"$DEPLOY" --type=strategic \
+            -p '{"spec":{"template":{"spec":{"containers":[{"name":"partner-console","imagePullPolicy":"IfNotPresent"}]}}}}'
           sudo -n k3s kubectl -n "$NS" set image deploy/"$DEPLOY" partner-console="$IMG"
           sudo -n k3s kubectl -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s
           health_check
@@ -204,11 +183,13 @@ jobs:
           trap - ERR
 
           # 同步磁盘清单中的镜像，避免与运行态漂移（清单不会被自动 apply）
-          # 首次迁移时镜像行是 docker.io/library/partner-console-partner-console:k3s-ba1ff509，按唯一的 image: 行替换
-          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -cE '^[[:space:]]*image:' "$MANIFEST")" = "1" ]; then
+          # 首次迁移时镜像行可能仍是 docker.io/library/partner-console-partner-console:k3s-ba1ff509
+          image_pattern='((registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/partner-console(:[^"[:space:]]+|@sha256:[[:xdigit:]]{64})|docker\.io/library/partner-console-partner-console:[^"[:space:]]+)'
+          if sudo -n test -f "$MANIFEST" && [ "$(sudo -n grep -cE "$image_pattern" "$MANIFEST")" = "1" ]; then
             sudo -n cp -a "$MANIFEST" "$MANIFEST.before-$(date +%Y%m%d-%H%M%S)"
-            sudo -n sed -i -E "s#^([[:space:]]*image: *).*#\1${IMG}#" "$MANIFEST"
-            sudo -n grep -nE '^[[:space:]]*image:' "$MANIFEST"
+            sudo -n sed -i -E "s#(image: *\"?)((registry\.apexdata\.com\.cn/ty/triomate|100\.64\.0\.8:8443/triomate)/partner-console(:[^\"[:space:]]+|@sha256:[[:xdigit:]]{64})|docker\.io/library/partner-console-partner-console:[^\"[:space:]]+)#\1${IMG}#" "$MANIFEST"
+            sudo -n sed -i -E "/^[[:space:]]*image: .*triomate\/partner-console(:|@)/,/^[[:space:]]*image:/ s#^([[:space:]]*imagePullPolicy: *)Never#\1IfNotPresent#" "$MANIFEST"
+            sudo -n grep -nE 'triomate/partner-console(:|@)' "$MANIFEST"
             if [ "$(sudo -n grep -cF "$IMG" "$MANIFEST")" != "1" ]; then
               echo "ERROR: $MANIFEST image line was not updated to $IMG" >&2
               exit 1
