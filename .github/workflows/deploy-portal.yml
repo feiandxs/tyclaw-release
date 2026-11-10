@@ -154,6 +154,8 @@ jobs:
           sudo -n k3s kubectl -n portal rollout status deployment/portal --timeout=180s
           curl --fail --silent --show-error http://127.0.0.1:8099/health
           curl --fail --silent --show-error http://127.0.0.1:8098/api/health
+          sudo -n k3s kubectl -n portal annotate deploy/portal --overwrite triomate.ai/source-sha="$sha" kubernetes.io/change-cause="tyclaw-release deploy-portal sha=$sha (ty/triomate#3680)"
+          sudo -n k3s kubectl -n agent-service annotate deploy/portal-content --overwrite triomate.ai/source-sha="$sha" kubernetes.io/change-cause="tyclaw-release deploy-portal sha=$sha (ty/triomate#3680)"
           case "$portal" in
             100.64.0.8:8443/triomate/*)
               sudo -n /usr/local/sbin/harbor-run-tag prod portal "$portal" || echo "::warning::harbor-run-tag failed for portal; run/prev tags not updated"
