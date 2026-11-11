@@ -391,9 +391,11 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # pi-engine 的 node_modules 是实体文件，electron-builder 并发复制时会超过默认句柄上限（EMFILE）
-          ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
-          echo "open files limit: $(ulimit -n)"
+          # pi-engine 的 node_modules 是实体文件，签名阶段会并发打开 .app 内全部文件探测二进制，
+          # 超过 runner 的进程句柄上限（EMFILE）。先抬内核上限，再抬 shell 上限。
+          sudo sysctl -w kern.maxfiles=2097152 kern.maxfilesperproc=1048576 || true
+          ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
+          echo "open files limit: $(ulimit -n); $(sysctl -n kern.maxfiles kern.maxfilesperproc | tr '\n' ' ')"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           else
@@ -972,9 +974,11 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # pi-engine 的 node_modules 是实体文件，electron-builder 并发复制时会超过默认句柄上限（EMFILE）
-          ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
-          echo "open files limit: $(ulimit -n)"
+          # pi-engine 的 node_modules 是实体文件，签名阶段会并发打开 .app 内全部文件探测二进制，
+          # 超过 runner 的进程句柄上限（EMFILE）。先抬内核上限，再抬 shell 上限。
+          sudo sysctl -w kern.maxfiles=2097152 kern.maxfilesperproc=1048576 || true
+          ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
+          echo "open files limit: $(ulimit -n); $(sysctl -n kern.maxfiles kern.maxfilesperproc | tr '\n' ' ')"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           else
