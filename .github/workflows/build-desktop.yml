@@ -391,6 +391,9 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # pi-engine 的 node_modules 是实体文件，electron-builder 并发复制时会超过默认句柄上限（EMFILE）
+          ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
+          echo "open files limit: $(ulimit -n)"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
           else
@@ -969,6 +972,9 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # pi-engine 的 node_modules 是实体文件，electron-builder 并发复制时会超过默认句柄上限（EMFILE）
+          ulimit -n 65536 2>/dev/null || ulimit -n 10240 || true
+          echo "open files limit: $(ulimit -n)"
           if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
             TAILOS_RELEASE_CHANNEL=preview TAILOS_DESKTOP_DEV_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" TAILOS_BUILD_SHA="${{ steps.git_ref.outputs.short_sha }}" pnpm exec electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never
           else
