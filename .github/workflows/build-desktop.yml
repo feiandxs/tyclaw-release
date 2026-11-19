@@ -31,6 +31,7 @@ concurrency:
 env:
   PNPM_VERSION: "11.1.1"
   NODE_VERSION: "22"
+  GO_VERSION: "1.24.1"
   PYTHON_VERSION_SERIES: "3.12"
   BUN_VERSION: "1.3.13"
   UV_VERSION: "0.11.33"
@@ -87,6 +88,12 @@ jobs:
           # with prune-actions-cache.yml when changing cache inputs here.
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Cache Electron binaries
         uses: actions/cache@v5
@@ -498,6 +505,16 @@ jobs:
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos" \) -type f | grep -q .; then
+            echo "Missing bundled tailos in macOS app resources" >&2
+            exit 1
+          fi
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
+              echo "Missing bundled tailos-legacy in macOS preview app resources" >&2
+              exit 1
+            fi
+          fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
             echo "Missing bundled bun in macOS app resources" >&2
             exit 1
@@ -673,6 +690,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Cache Electron binaries
         uses: actions/cache@v5
@@ -1081,6 +1104,16 @@ jobs:
             echo "Missing bundled rg in macOS app resources" >&2
             exit 1
           fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos" \) -type f | grep -q .; then
+            echo "Missing bundled tailos in macOS app resources" >&2
+            exit 1
+          fi
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
+              echo "Missing bundled tailos-legacy in macOS preview app resources" >&2
+              exit 1
+            fi
+          fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
             echo "Missing bundled bun in macOS app resources" >&2
             exit 1
@@ -1258,6 +1291,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Cache Electron binaries
         uses: actions/cache@v5
@@ -1614,6 +1653,16 @@ jobs:
             echo "Missing bundled rg.exe in Windows unpacked app resources" >&2
             exit 1
           fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos.exe' -type f | grep -q .; then
+            echo "Missing bundled tailos.exe in Windows unpacked app resources" >&2
+            exit 1
+          fi
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-legacy.exe' -type f | grep -q .; then
+              echo "Missing bundled tailos-legacy.exe in Windows preview unpacked app resources" >&2
+              exit 1
+            fi
+          fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/bun.exe' -type f | grep -q .; then
             echo "Missing bundled bun.exe in Windows unpacked app resources" >&2
             exit 1
@@ -1791,6 +1840,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Cache Electron binaries
         uses: actions/cache@v5
@@ -2086,6 +2141,9 @@ jobs:
           fi
           ROOT="release/${VERSION}/linux-unpacked/resources"
           test -x "$ROOT/bin/tailos"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            test -x "$ROOT/bin/tailos-legacy"
+          fi
           test -x "$ROOT/bin/rg"
           test -x "$ROOT/bin/bun"
           test -x "$ROOT/bin/uv"
@@ -2212,6 +2270,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Cache Electron binaries
         uses: actions/cache@v5
@@ -2376,6 +2440,9 @@ jobs:
           fi
           ROOT="release/${VERSION}/linux-arm64-unpacked/resources"
           test -x "$ROOT/bin/tailos"
+          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
+            test -x "$ROOT/bin/tailos-legacy"
+          fi
           test -x "$ROOT/bin/rg"
           test -x "$ROOT/bin/bun"
           test -x "$ROOT/bin/uv"
