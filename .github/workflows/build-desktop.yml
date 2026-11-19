@@ -509,11 +509,9 @@ jobs:
             echo "Missing bundled tailos in macOS app resources" >&2
             exit 1
           fi
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
-              echo "Missing bundled tailos-legacy in macOS preview app resources" >&2
-              exit 1
-            fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
+            echo "Missing bundled tailos-legacy in macOS app resources" >&2
+            exit 1
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
             echo "Missing bundled bun in macOS app resources" >&2
@@ -1108,11 +1106,9 @@ jobs:
             echo "Missing bundled tailos in macOS app resources" >&2
             exit 1
           fi
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
-              echo "Missing bundled tailos-legacy in macOS preview app resources" >&2
-              exit 1
-            fi
+          if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/tailos-legacy" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/tailos-legacy" \) -type f | grep -q .; then
+            echo "Missing bundled tailos-legacy in macOS app resources" >&2
+            exit 1
           fi
           if ! find "$TMP_DIR" \( -path "*/${APP_NAME}.app/Contents/Resources/bin/bun" -o -path "*/${LEGACY_APP_NAME}.app/Contents/Resources/bin/bun" \) -type f | grep -q .; then
             echo "Missing bundled bun in macOS app resources" >&2
@@ -1657,11 +1653,9 @@ jobs:
             echo "Missing bundled tailos.exe in Windows unpacked app resources" >&2
             exit 1
           fi
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-legacy.exe' -type f | grep -q .; then
-              echo "Missing bundled tailos-legacy.exe in Windows preview unpacked app resources" >&2
-              exit 1
-            fi
+          if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/tailos-legacy.exe' -type f | grep -q .; then
+            echo "Missing bundled tailos-legacy.exe in Windows unpacked app resources" >&2
+            exit 1
           fi
           if ! find "release/${VERSION}" -path '*/win-unpacked/resources/bin/bun.exe' -type f | grep -q .; then
             echo "Missing bundled bun.exe in Windows unpacked app resources" >&2
@@ -2141,9 +2135,7 @@ jobs:
           fi
           ROOT="release/${VERSION}/linux-unpacked/resources"
           test -x "$ROOT/bin/tailos"
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            test -x "$ROOT/bin/tailos-legacy"
-          fi
+          test -x "$ROOT/bin/tailos-legacy"
           test -x "$ROOT/bin/rg"
           test -x "$ROOT/bin/bun"
           test -x "$ROOT/bin/uv"
@@ -2440,9 +2432,7 @@ jobs:
           fi
           ROOT="release/${VERSION}/linux-arm64-unpacked/resources"
           test -x "$ROOT/bin/tailos"
-          if [ "${{ steps.release_channel.outputs.desktop_channel }}" = "preview" ]; then
-            test -x "$ROOT/bin/tailos-legacy"
-          fi
+          test -x "$ROOT/bin/tailos-legacy"
           test -x "$ROOT/bin/rg"
           test -x "$ROOT/bin/bun"
           test -x "$ROOT/bin/uv"
