@@ -6,11 +6,14 @@
 # （任何人/CI 无需 token 直链下载）。
 #
 # 产物集（每平台一个归档 + .sha256 旁证）：
-#   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host
-#   - Linux x64         : tailos, tailos-python-shim, tailos-browser-host
-#   - Linux arm64       : tailos, tailos-python-shim, tailos-browser-host
-#   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe,
-#                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe
+#   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
+#   - Linux x64         : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
+#   - Linux arm64       : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
+#   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe, tailos-ocr-worker.exe,
+#                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe,
+#                         tailos-windows-sandbox-exec.exe
+#   tailos-ocr-worker / tailos-windows-sandbox-exec 只在源码 ref 含有对应 crate / bin 时构建并打包
+#   （较早的 ref 没有它们，重建旧版本时自动跳过）。
 #
 # 结构：prepare-release 先解析源码 SHA、建好 Release（串行化，避免多平台并发创建竞态），
 #       各平台 job needs 它、按同一个 SHA 构建并只上传自己的 asset（gh release upload --clobber）。
@@ -247,11 +250,15 @@ jobs:
         run: |
           rustup target add x86_64-apple-darwin
           cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target x86_64-apple-darwin
+          if [ -d tailos-ocr-worker ]; then
+            cargo build --release --locked -p tailos-ocr-worker --bins --target x86_64-apple-darwin
+          fi
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/x86_64-apple-darwin/release/tailos "$STAGE/"
           cp target/x86_64-apple-darwin/release/tailos-python-shim "$STAGE/"
           cp target/x86_64-apple-darwin/release/tailos-browser-host "$STAGE/"
+          if [ -f target/x86_64-apple-darwin/release/tailos-ocr-worker ]; then cp target/x86_64-apple-darwin/release/tailos-ocr-worker "$STAGE/"; fi
           chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
@@ -322,11 +329,15 @@ jobs:
         run: |
           rustup target add aarch64-apple-darwin
           cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target aarch64-apple-darwin
+          if [ -d tailos-ocr-worker ]; then
+            cargo build --release --locked -p tailos-ocr-worker --bins --target aarch64-apple-darwin
+          fi
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/aarch64-apple-darwin/release/tailos "$STAGE/"
           cp target/aarch64-apple-darwin/release/tailos-python-shim "$STAGE/"
           cp target/aarch64-apple-darwin/release/tailos-browser-host "$STAGE/"
+          if [ -f target/aarch64-apple-darwin/release/tailos-ocr-worker ]; then cp target/aarch64-apple-darwin/release/tailos-ocr-worker "$STAGE/"; fi
           chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
@@ -397,11 +408,15 @@ jobs:
         working-directory: source/crates
         run: |
           cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
+          if [ -d tailos-ocr-worker ]; then
+            cargo build --release --locked -p tailos-ocr-worker --bins
+          fi
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/release/tailos "$STAGE/"
           cp target/release/tailos-python-shim "$STAGE/"
           cp target/release/tailos-browser-host "$STAGE/"
+          if [ -f target/release/tailos-ocr-worker ]; then cp target/release/tailos-ocr-worker "$STAGE/"; fi
           chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
@@ -473,11 +488,15 @@ jobs:
         working-directory: source/crates
         run: |
           cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
+          if [ -d tailos-ocr-worker ]; then
+            cargo build --release --locked -p tailos-ocr-worker --bins
+          fi
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/release/tailos "$STAGE/"
           cp target/release/tailos-python-shim "$STAGE/"
           cp target/release/tailos-browser-host "$STAGE/"
+          if [ -f target/release/tailos-ocr-worker ]; then cp target/release/tailos-ocr-worker "$STAGE/"; fi
           chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
           file "$STAGE"/*
 
@@ -551,11 +570,18 @@ jobs:
         run: |
           # 主 CLI 二进制
           cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
+          if [ -d tailos-ocr-worker ]; then
+            cargo build --release --locked -p tailos-ocr-worker --bins
+          fi
           # Windows 沙箱辅助 bin（独立 package，不在主 workspace，没有自己的 Cargo.lock，不加 --locked）
+          SANDBOX_BINS="--bin tailos-command-runner --bin tailos-windows-sandbox-setup"
+          if [ -d vendor/codex-windows-sandbox/src/bin/exec_main ]; then
+            SANDBOX_BINS="$SANDBOX_BINS --bin tailos-windows-sandbox-exec"
+          fi
           cargo build --release \
             --manifest-path vendor/codex-windows-sandbox/Cargo.toml \
             --target-dir target \
-            --bin tailos-command-runner --bin tailos-windows-sandbox-setup
+            $SANDBOX_BINS
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
           cp target/release/tailos.exe                       "$STAGE/"
@@ -563,6 +589,8 @@ jobs:
           cp target/release/tailos-browser-host.exe          "$STAGE/"
           cp target/release/tailos-command-runner.exe        "$STAGE/"
           cp target/release/tailos-windows-sandbox-setup.exe "$STAGE/"
+          if [ -f target/release/tailos-ocr-worker.exe ]; then cp target/release/tailos-ocr-worker.exe "$STAGE/"; fi
+          if [ -f target/release/tailos-windows-sandbox-exec.exe ]; then cp target/release/tailos-windows-sandbox-exec.exe "$STAGE/"; fi
           ls -l "$STAGE"
 
       - name: Package + checksum
