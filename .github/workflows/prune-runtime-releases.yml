@@ -25,6 +25,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           KEEP: "10"
+          # 被消费端 lock 钉住、不得删除的版本（空格分隔）。
+          # runtime-v1.51.0：ty/triomate agent-service/general-agent/runtime.lock.json（General Agent rust-run）。
+          PROTECTED_TAGS: "runtime-v1.51.0"
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +47,9 @@ jobs:
           printf '  %s\n' "${tags[@]:keep_from}"
           failed=0
           for tag in "${tags[@]:0:keep_from}"; do
+            case " $PROTECTED_TAGS " in
+              *" $tag "*) echo "Keeping protected $tag"; continue ;;
+            esac
             echo "Deleting $tag"
             if ! gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag; then
               echo "Failed to delete $tag" >&2
