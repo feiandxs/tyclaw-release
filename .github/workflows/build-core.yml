@@ -1,22 +1,24 @@
 # Build Core Runtime Release
 #
-# 独立构建并发布 Rust runtime（tailos）的预编译二进制。
+# 独立构建并发布 runtime 辅助程序的预编译二进制，并打包协议 schema。
 # 与 build-desktop.yml 解耦：源码在私有 GitLab ty/triomate 的 crates/（原 ty/tailos-core，
 # 2026-10 迁回 monorepo，见 ty/triomate#3305），产物发布到本 public GitHub 仓库的 Release
 # （任何人/CI 无需 token 直链下载）。
 #
-# 产物集（每平台一个归档 + .sha256 旁证）：
-#   - macOS x64 / arm64 : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
-#   - Linux x64         : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
-#   - Linux arm64       : tailos, tailos-python-shim, tailos-browser-host, tailos-ocr-worker
-#   - Windows x64       : tailos.exe, tailos-python-shim.exe, tailos-browser-host.exe, tailos-ocr-worker.exe,
-#                         tailos-command-runner.exe, tailos-windows-sandbox-setup.exe,
-#                         tailos-windows-sandbox-exec.exe
-#   tailos-ocr-worker / tailos-windows-sandbox-exec 只在源码 ref 含有对应 crate / bin 时构建并打包
-#   （较早的 ref 没有它们，重建旧版本时自动跳过）。
+# 不再编译 Rust `tailos` 主二进制、tailos-python-shim、tailos-browser-host：桌面端的 tailos / shim /
+# browser-host 由 core-v2（Go）在桌面打包时构建（scripts/ensure-tailos-cli.mjs），这里只出 Rust 辅助程序。
+# 已发布版本（含 runtime-v1.51.0 / v1.52.0 及更早）的归档仍含 Rust tailos，服务端 General Agent 的
+# agent-service/general-agent/runtime.lock.json 钉在 runtime-v1.51.0；已发布的 asset 不得覆盖或删除。
+#
+# 产物集（每平台一个归档 + .sha256 旁证；归档名与扁平结构与旧版相同，只是内容变少）：
+#   - macOS x64 / arm64 : tailos-ocr-worker
+#   - Linux x64 / arm64 : tailos-ocr-worker
+#   - Windows x64       : tailos-ocr-worker.exe, tailos-command-runner.exe,
+#                         tailos-windows-sandbox-setup.exe, tailos-windows-sandbox-exec.exe
+#   - tailos-protocol-schema-<version>.tar.gz（平台无关，直接打包 crates/ 已提交的 schema，不编译）
 #
 # 结构：prepare-release 先解析源码 SHA、建好 Release（串行化，避免多平台并发创建竞态），
-#       各平台 job needs 它、按同一个 SHA 构建并只上传自己的 asset（gh release upload --clobber）。
+#       各平台 job needs 它、按同一个 SHA 构建并只上传自己的 asset（gh release upload，已存在则失败）。
 #
 # 触发：手动 workflow_dispatch（version + ref + os + publish），或 repository_dispatch（GitLab CI 远程触发）。
 # Release tag：runtime-v<version>（独立前缀，避免与桌面发布 tag 撞车）。
@@ -143,7 +145,7 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "Runtime v${VERSION}" \
-              --notes "Trio Mate runtime ${VERSION}. Source: ty/triomate@${{ steps.source.outputs.sha }} (crates/). Prebuilt binaries per platform (tar.gz/zip + .sha256)." \
+              --notes "Trio Mate runtime ${VERSION}. Source: ty/triomate@${{ steps.source.outputs.sha }} (crates/). Helper binaries per platform (tailos-ocr-worker, Windows sandbox helpers; no Rust tailos) + protocol schema bundle." \
               --target main
           fi
 
@@ -245,21 +247,17 @@ jobs:
           workspaces: |
             source/crates -> target
 
-      - name: Build runtime (mac x64)
+      - name: Build runtime helpers (mac x64)
         working-directory: source/crates
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target x86_64-apple-darwin
-          if [ -d tailos-ocr-worker ]; then
-            cargo build --release --locked -p tailos-ocr-worker --bins --target x86_64-apple-darwin
-          fi
+          # 只构建 OCR worker；crate 缺失说明 ref 太旧，直接失败而不是产出缺文件的归档。
+          test -d tailos-ocr-worker
+          cargo build --release --locked -p tailos-ocr-worker --bins --target x86_64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
-          cp target/x86_64-apple-darwin/release/tailos "$STAGE/"
-          cp target/x86_64-apple-darwin/release/tailos-python-shim "$STAGE/"
-          cp target/x86_64-apple-darwin/release/tailos-browser-host "$STAGE/"
-          if [ -f target/x86_64-apple-darwin/release/tailos-ocr-worker ]; then cp target/x86_64-apple-darwin/release/tailos-ocr-worker "$STAGE/"; fi
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
+          cp target/x86_64-apple-darwin/release/tailos-ocr-worker "$STAGE/"
+          chmod +x "$STAGE"/tailos-ocr-worker
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -276,9 +274,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
-            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+          TAG="runtime-v${{ needs.prepare-release.outputs.version }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          # 已发布的 asset 不得覆盖：旧版本归档含 Rust tailos，被 General Agent lock 钉住；
+          # 用旧版本号重跑会把它换成不含 tailos 的归档。已存在即失败，请 bump 版本号。
+          if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "ASSET_EXISTS: $ASSET is already published for $TAG; refusing to overwrite. Bump the runtime version." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" \
+            --repo "${{ github.repository }}"
 
       - name: Upload dry-run artifact
         if: needs.prepare-release.outputs.publish != 'true'
@@ -324,21 +329,17 @@ jobs:
           workspaces: |
             source/crates -> target
 
-      - name: Build runtime (mac arm64)
+      - name: Build runtime helpers (mac arm64)
         working-directory: source/crates
         run: |
           rustup target add aarch64-apple-darwin
-          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins --target aarch64-apple-darwin
-          if [ -d tailos-ocr-worker ]; then
-            cargo build --release --locked -p tailos-ocr-worker --bins --target aarch64-apple-darwin
-          fi
+          # 只构建 OCR worker；crate 缺失说明 ref 太旧，直接失败而不是产出缺文件的归档。
+          test -d tailos-ocr-worker
+          cargo build --release --locked -p tailos-ocr-worker --bins --target aarch64-apple-darwin
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
-          cp target/aarch64-apple-darwin/release/tailos "$STAGE/"
-          cp target/aarch64-apple-darwin/release/tailos-python-shim "$STAGE/"
-          cp target/aarch64-apple-darwin/release/tailos-browser-host "$STAGE/"
-          if [ -f target/aarch64-apple-darwin/release/tailos-ocr-worker ]; then cp target/aarch64-apple-darwin/release/tailos-ocr-worker "$STAGE/"; fi
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
+          cp target/aarch64-apple-darwin/release/tailos-ocr-worker "$STAGE/"
+          chmod +x "$STAGE"/tailos-ocr-worker
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -355,9 +356,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
-            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+          TAG="runtime-v${{ needs.prepare-release.outputs.version }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          # 已发布的 asset 不得覆盖：旧版本归档含 Rust tailos，被 General Agent lock 钉住；
+          # 用旧版本号重跑会把它换成不含 tailos 的归档。已存在即失败，请 bump 版本号。
+          if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "ASSET_EXISTS: $ASSET is already published for $TAG; refusing to overwrite. Bump the runtime version." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" \
+            --repo "${{ github.repository }}"
 
       - name: Upload dry-run artifact
         if: needs.prepare-release.outputs.publish != 'true'
@@ -404,20 +412,16 @@ jobs:
           workspaces: |
             source/crates -> target
 
-      - name: Build runtime (linux x64)
+      - name: Build runtime helpers (linux x64)
         working-directory: source/crates
         run: |
-          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
-          if [ -d tailos-ocr-worker ]; then
-            cargo build --release --locked -p tailos-ocr-worker --bins
-          fi
+          # 只构建 OCR worker；crate 缺失说明 ref 太旧，直接失败而不是产出缺文件的归档。
+          test -d tailos-ocr-worker
+          cargo build --release --locked -p tailos-ocr-worker --bins
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
-          cp target/release/tailos "$STAGE/"
-          cp target/release/tailos-python-shim "$STAGE/"
-          cp target/release/tailos-browser-host "$STAGE/"
-          if [ -f target/release/tailos-ocr-worker ]; then cp target/release/tailos-ocr-worker "$STAGE/"; fi
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
+          cp target/release/tailos-ocr-worker "$STAGE/"
+          chmod +x "$STAGE"/tailos-ocr-worker
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -434,9 +438,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
-            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+          TAG="runtime-v${{ needs.prepare-release.outputs.version }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          # 已发布的 asset 不得覆盖：旧版本归档含 Rust tailos，被 General Agent lock 钉住；
+          # 用旧版本号重跑会把它换成不含 tailos 的归档。已存在即失败，请 bump 版本号。
+          if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "ASSET_EXISTS: $ASSET is already published for $TAG; refusing to overwrite. Bump the runtime version." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" \
+            --repo "${{ github.repository }}"
 
       - name: Upload dry-run artifact
         if: needs.prepare-release.outputs.publish != 'true'
@@ -484,20 +495,16 @@ jobs:
           workspaces: |
             source/crates -> target
 
-      - name: Build runtime (linux arm64)
+      - name: Build runtime helpers (linux arm64)
         working-directory: source/crates
         run: |
-          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
-          if [ -d tailos-ocr-worker ]; then
-            cargo build --release --locked -p tailos-ocr-worker --bins
-          fi
+          # 只构建 OCR worker；crate 缺失说明 ref 太旧，直接失败而不是产出缺文件的归档。
+          test -d tailos-ocr-worker
+          cargo build --release --locked -p tailos-ocr-worker --bins
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
-          cp target/release/tailos "$STAGE/"
-          cp target/release/tailos-python-shim "$STAGE/"
-          cp target/release/tailos-browser-host "$STAGE/"
-          if [ -f target/release/tailos-ocr-worker ]; then cp target/release/tailos-ocr-worker "$STAGE/"; fi
-          chmod +x "$STAGE"/tailos "$STAGE"/tailos-python-shim "$STAGE"/tailos-browser-host
+          cp target/release/tailos-ocr-worker "$STAGE/"
+          chmod +x "$STAGE"/tailos-ocr-worker
           file "$STAGE"/*
 
       - name: Package + checksum
@@ -514,9 +521,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
-            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+          TAG="runtime-v${{ needs.prepare-release.outputs.version }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          # 已发布的 asset 不得覆盖：旧版本归档含 Rust tailos，被 General Agent lock 钉住；
+          # 用旧版本号重跑会把它换成不含 tailos 的归档。已存在即失败，请 bump 版本号。
+          if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "ASSET_EXISTS: $ASSET is already published for $TAG; refusing to overwrite. Bump the runtime version." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" \
+            --repo "${{ github.repository }}"
 
       - name: Upload dry-run artifact
         if: needs.prepare-release.outputs.publish != 'true'
@@ -564,33 +578,25 @@ jobs:
             source/crates -> target
 
       # 注意：cargo 必须在 source/crates 内执行，crates/.cargo/config.toml 的 crt-static 设置按 cwd 向上查找。
-      - name: Build runtime (win x64)
+      - name: Build runtime helpers (win x64)
         working-directory: source/crates
         shell: bash
         run: |
-          # 主 CLI 二进制
-          cargo build --release --locked -p tailos-cli -p tailos-browser-host --bins
-          if [ -d tailos-ocr-worker ]; then
-            cargo build --release --locked -p tailos-ocr-worker --bins
-          fi
+          # 只构建 OCR worker 与 Windows 沙箱辅助程序；crate / bin 缺失说明 ref 太旧，直接失败。
+          test -d tailos-ocr-worker
+          test -d vendor/codex-windows-sandbox/src/bin/exec_main
+          cargo build --release --locked -p tailos-ocr-worker --bins
           # Windows 沙箱辅助 bin（独立 package，不在主 workspace，没有自己的 Cargo.lock，不加 --locked）
-          SANDBOX_BINS="--bin tailos-command-runner --bin tailos-windows-sandbox-setup"
-          if [ -d vendor/codex-windows-sandbox/src/bin/exec_main ]; then
-            SANDBOX_BINS="$SANDBOX_BINS --bin tailos-windows-sandbox-exec"
-          fi
           cargo build --release \
             --manifest-path vendor/codex-windows-sandbox/Cargo.toml \
             --target-dir target \
-            $SANDBOX_BINS
+            --bin tailos-command-runner --bin tailos-windows-sandbox-setup --bin tailos-windows-sandbox-exec
           STAGE="$GITHUB_WORKSPACE/stage"
           mkdir -p "$STAGE"
-          cp target/release/tailos.exe                       "$STAGE/"
-          cp target/release/tailos-python-shim.exe           "$STAGE/"
-          cp target/release/tailos-browser-host.exe          "$STAGE/"
+          cp target/release/tailos-ocr-worker.exe            "$STAGE/"
           cp target/release/tailos-command-runner.exe        "$STAGE/"
           cp target/release/tailos-windows-sandbox-setup.exe "$STAGE/"
-          if [ -f target/release/tailos-ocr-worker.exe ]; then cp target/release/tailos-ocr-worker.exe "$STAGE/"; fi
-          if [ -f target/release/tailos-windows-sandbox-exec.exe ]; then cp target/release/tailos-windows-sandbox-exec.exe "$STAGE/"; fi
+          cp target/release/tailos-windows-sandbox-exec.exe  "$STAGE/"
           ls -l "$STAGE"
 
       - name: Package + checksum
@@ -609,9 +615,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "runtime-v${{ needs.prepare-release.outputs.version }}" \
-            "${{ steps.pkg.outputs.asset }}" "${{ steps.pkg.outputs.asset }}.sha256" \
-            --repo "${{ github.repository }}" --clobber
+          TAG="runtime-v${{ needs.prepare-release.outputs.version }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          # 已发布的 asset 不得覆盖：旧版本归档含 Rust tailos，被 General Agent lock 钉住；
+          # 用旧版本号重跑会把它换成不含 tailos 的归档。已存在即失败，请 bump 版本号。
+          if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "ASSET_EXISTS: $ASSET is already published for $TAG; refusing to overwrite. Bump the runtime version." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" \
+            --repo "${{ github.repository }}"
 
       - name: Upload dry-run artifact
         if: needs.prepare-release.outputs.publish != 'true'
