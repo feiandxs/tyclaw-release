@@ -1,0 +1,122 @@
+name: Publish Headless Linux to R2
+
+on:
+  repository_dispatch:
+    types: [publish-headless]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Pure 0.x.y version already uploaded to GitLab Generic Package Registry (e.g. 0.1.2)"
+        required: true
+        type: string
+      channel:
+        description: "Release channel (stable or dev)"
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - dev
+
+concurrency:
+  group: headless-r2-publication
+  cancel-in-progress: false
+
+env:
+  R2_BUCKET: "files"
+  R2_HEADLESS_PREFIX: "releases/tailos-headless"
+
+jobs:
+  publish-r2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release parameters
+        id: vars
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            CHANNEL="${{ github.event.inputs.channel }}"
+          else
+            VERSION="${{ github.event.client_payload.version }}"
+            CHANNEL="${{ github.event.client_payload.channel }}"
+          fi
+          if ! printf '%s\n' "$VERSION" | grep -Eq '^0\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "Invalid version '$VERSION': expected pure 0.x.y semver" >&2
+            exit 1
+          fi
+          if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "dev" ]; then
+            if printf '%s\n' "$VERSION" | grep -Eq '^0\.[0-9]+\.[0-9]+$'; then
+              CHANNEL="stable"
+            else
+              CHANNEL="dev"
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "release_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Download & verify binaries from GitLab Package Registry
+        env:
+          GITLAB_DEPLOY_TOKEN_PASS: ${{ secrets.GITLAB_DEPLOY_TOKEN_PASS }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.vars.outputs.version }}"
+          PKG_BASE="https://gitlab.apexdata.com.cn/api/v4/projects/ty%2Ftriomate/packages/generic/tailos/${VERSION}"
+          mkdir -p stage
+          cd stage
+          curl -fsSL -H "DEPLOY-TOKEN: ${GITLAB_DEPLOY_TOKEN_PASS}" -O "${PKG_BASE}/SHA256SUMS"
+          for ARCH in amd64 arm64; do
+            FILE="tailos-${VERSION}-linux-${ARCH}.tar.gz"
+            curl -fsSL -H "DEPLOY-TOKEN: ${GITLAB_DEPLOY_TOKEN_PASS}" -O "${PKG_BASE}/${FILE}"
+            grep "  ${FILE}$" SHA256SUMS | sha256sum -c -
+          done
+          ls -la
+
+      - name: Generate per-arch manifests and upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.vars.outputs.version }}"
+          CHANNEL="${{ steps.vars.outputs.channel }}"
+          RELEASE_DATE="${{ steps.vars.outputs.release_date }}"
+          MANIFEST_NAME="latest.json"
+          if [ "$CHANNEL" = "dev" ]; then
+            MANIFEST_NAME="dev.json"
+          fi
+
+          for ARCH in amd64 arm64; do
+            FILE="tailos-${VERSION}-linux-${ARCH}.tar.gz"
+            SHA256="$(sha256sum "stage/${FILE}" | awk '{print $1}')"
+            SIZE="$(stat -c%s "stage/${FILE}")"
+            ASSET_BASE="https://downloads.triomate.ai/tailos-headless/update/linux/${ARCH}/assets"
+            if [ "$CHANNEL" = "dev" ]; then
+              ASSET_BASE="https://downloads.triomate.ai/tailos-headless/update/dev/linux/${ARCH}/assets"
+            fi
+            cat <<JSON > "stage/${ARCH}-${MANIFEST_NAME}"
+          {
+            "version": "${VERSION}",
+            "channel": "${CHANNEL}",
+            "arch": "${ARCH}",
+            "filename": "${FILE}",
+            "url": "${ASSET_BASE}/${FILE}",
+            "sha256": "${SHA256}",
+            "size": ${SIZE},
+            "releaseDate": "${RELEASE_DATE}"
+          }
+          JSON
+            TARGET="s3://${R2_BUCKET}/${R2_HEADLESS_PREFIX}/linux/${ARCH}"
+            aws s3 cp "stage/${FILE}" "${TARGET}/${FILE}" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              --content-type "application/gzip"
+            aws s3 cp "stage/SHA256SUMS" "${TARGET}/SHA256SUMS" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              --content-type "text/plain; charset=utf-8"
+            aws s3 cp "stage/${ARCH}-${MANIFEST_NAME}" "${TARGET}/${MANIFEST_NAME}" \
+              --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+              --content-type "application/json; charset=utf-8"
+            echo "Published ${TARGET}/${FILE} and ${TARGET}/${MANIFEST_NAME}"
+          done
